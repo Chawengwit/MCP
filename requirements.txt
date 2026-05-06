@@ -1,0 +1,19 @@
+# MCP Data Gateway — Python dependencies
+# Pinned to minimum compatible versions; update as needed.
+
+# Model Context Protocol SDK
+mcp>=1.0.0
+
+# Async HTTP client (REST + GraphQL)
+httpx>=0.27.0
+
+# Secure credential storage via system keyring
+keyring>=24.0.0
+
+# Data validation and modeling
+pydantic>=2.5.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Note: `webbrowser` is part of Python's standard library — no install needed.
