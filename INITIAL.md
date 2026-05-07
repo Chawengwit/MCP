@@ -16,10 +16,10 @@
 |-------|-----|--------|
 | 3 — Authentication | [PRPs/phase3-auth.md](PRPs/phase3-auth.md) | ✅ Done — 49 tests, full security checklist verified |
 | 4 — API Gateway | [PRPs/phase4-gateway.md](PRPs/phase4-gateway.md) | ✅ Done — 50 tests, response normalization + retry + redacted logging verified |
-| 5 — Tools & Integration | [PRPs/phase5-tools.md](PRPs/phase5-tools.md) | Ready to execute |
-| 6 — Testing & Documentation | [PRPs/phase6-testing-docs.md](PRPs/phase6-testing-docs.md) | Ready to execute (depends on 5) |
+| 5 — Tools & Integration | [PRPs/phase5-tools.md](PRPs/phase5-tools.md) | ✅ Done — 35 tests (33 unit + 2 integration), all 5 tools registered, Recorder triple per call, secret redaction in insight events |
+| 6 — Testing & Documentation | [PRPs/phase6-testing-docs.md](PRPs/phase6-testing-docs.md) | Ready to execute |
 
-To execute the next phase: `/execute-prp PRPs/phase5-tools.md` (then 6).
+To execute the next phase: `/execute-prp PRPs/phase6-testing-docs.md`.
 
 ---
 

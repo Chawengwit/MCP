@@ -116,12 +116,14 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 7. ✓ Size enforcement via `MCP_MAX_RESPONSE_BYTES`: JSON/text truncates with metadata; binary → `RESPONSE_TOO_LARGE`
 8. ✓ All HTTP traffic logging routes through `src/events/redaction.py` (no Bearer tokens in logs)
 
-### Phase 5: Tools & Integration
-1. Implement remaining MCP tools (`fetch_data`, `send_data`, `execute_graphql`, `get_status`); `list_apis` already shipped in Phase 2
-2. Standardize response shape (success: `data` + `metadata`; error: `error` with code/message/details)
-3. Implement large-response handling (truncate + metadata; only return `RESPONSE_TOO_LARGE` when truncation isn't safe — e.g., binary/streaming)
-4. Integrate auto-authentication with tool execution
-5. **Wire `Recorder` into the tool call path** — every invocation calls `record_audit` + `record_usage` + `record_insight`; gateway calls `record_debug` only when `MCP_LOG_DEBUG_ENABLED=true`. See [`CLAUDE.md` § Activity Logging > Recording Rules](../CLAUDE.md).
+### Phase 5: Tools & Integration ✓ (complete)
+1. ✓ Remaining MCP tools shipped — `fetch_data`, `send_data`, `execute_graphql`, `get_status` (`list_apis` was Phase 2)
+2. ✓ Standard response shape from CLAUDE.md observed everywhere; error responses are `{error: ...}` only with no top-level `metadata` sibling
+3. ✓ Large-response handling delegated to Phase 4's `normalize_*_response` (truncate + metadata; binary/streaming → `RESPONSE_TOO_LARGE`)
+4. ✓ Auto-authentication via `src/tools/auth_resolver.py` — branches on `auth.type` ∈ {`oauth2`, `bearer`, `api_key`, `None`}; `KNOWN_AUTH_TYPES` constant prevents drift between `resolve_auth_headers` (request path) and `peek_auth_state` (read-only `get_status`)
+5. ✓ `Recorder` triple in `try/finally` per tool — `record_audit` + `record_usage` + `record_insight` fire on every code path; `tool_args` runs through `redact_body` before insight emission
+6. ✓ `get_status` uses `Credentials.peek()` exclusively — never refreshes, never opens a browser; tested with `OAuth.start_flow` spy
+7. ✓ `ApiAuthConfig.client_secret` field added to support OAuth refresh; `_build_oauth_configs` skips with warning when required fields are missing instead of silently constructing a broken config
 
 ### Phase 6: Testing & Documentation
 1. Unit tests per module
@@ -140,21 +142,24 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 
 ## Critical Files (status)
 - `src/server.py` — MCP server entry point ✓ **implemented**
-- `src/config.py` — API config loader with `${VAR}` substitution ✓ **implemented**
+- `src/config.py` — API config loader with `${VAR}` substitution; `ApiAuthConfig` includes `client_secret` ✓ **implemented**
 - `src/tools/spec.py`, `src/tools/registry.py`, `src/tools/builtin.py` — tool registry + `list_apis` ✓ **implemented**
 - `src/auth/oauth.py` — OAuth 2.0 + PKCE flow ✓ **implemented**
-- `src/auth/credentials.py` — Keyring-backed credential store with concurrent-refresh lock ✓ **implemented**
+- `src/auth/credentials.py` — Keyring-backed credential store with concurrent-refresh lock + `peek()` ✓ **implemented**
 - `src/events/` — Activity logging (schemas, writers, retention, recorder) ✓ **implemented**
 - `src/gateway/api_client.py` — Generic REST/GraphQL client with retry + transport-error retry ✓ **implemented**
 - `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`) ✓ **implemented**
-- `src/models/data_models.py` — Pydantic models for responses (planned, Phase 5)
-- `src/tools/mcp_tools.py` — `fetch_data`/`send_data`/`execute_graphql`/`get_status` (planned, Phase 5)
+- `src/tools/context.py` — `ToolContext` dependency container ✓ **implemented**
+- `src/tools/auth_resolver.py` — `resolve_auth_headers` + `peek_auth_state` (auth.type branching) ✓ **implemented**
+- `src/tools/mcp_tools.py` — `fetch_data`/`send_data`/`execute_graphql`/`get_status` + Recorder triple ✓ **implemented**
+- `src/models/data_models.py` — Pydantic models for responses (out of scope; tools rely on dict shapes from CLAUDE.md)
 - `config/api_configs.json` — API configuration template (gitignored runtime file; example committed at `config/api_configs.example.json`)
 - `tests/events/` — 27 passing unit tests for `src/events/` ✓ **implemented**
 - `tests/auth/` — 49 passing unit tests for `src/auth/` ✓ **implemented**
 - `tests/gateway/` — 50 passing unit tests for `src/gateway/` ✓ **implemented**
-- `tests/test_config.py`, `tests/test_server.py`, `tests/tools/` — Phase 2 unit tests ✓ **implemented**
-- `tests/integration/` — end-to-end integration tests (planned, Phase 6)
+- `tests/tools/` — 35 passing unit + integration tests for `src/tools/` ✓ **implemented**
+- `tests/test_config.py`, `tests/test_server.py` — config + server bootstrap + `_build_oauth_configs` tests ✓ **implemented**
+- `tests/integration/` — additional end-to-end / smoke tests (planned, Phase 6)
 
 ## Technology Stack
 

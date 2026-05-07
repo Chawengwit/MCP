@@ -8,9 +8,10 @@
         "type": "oauth2",
         "provider": "generic",
         "client_id": "${EXAMPLE_REST_CLIENT_ID}",
+        "client_secret": "${EXAMPLE_REST_CLIENT_SECRET}",
         "authorize_url": "https://api.example.com/oauth/authorize",
         "token_url": "https://api.example.com/oauth/token",
-        "redirect_uri": "http://localhost:8765/callback",
+        "redirect_uri": "http://127.0.0.1:8765/callback",
         "scopes": ["read", "write"]
       },
       "endpoints": {

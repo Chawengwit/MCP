@@ -14,6 +14,7 @@ class ApiAuthConfig(BaseModel):
     type: str
     provider: str | None = None
     client_id: str | None = None
+    client_secret: str | None = None  # populated via ${VAR} substitution at load time
     authorize_url: str | None = None
     token_url: str | None = None
     redirect_uri: str | None = None

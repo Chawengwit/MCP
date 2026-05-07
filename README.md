@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), authentication (`src/auth/`), and the API gateway (`src/gateway/`) are implemented and tested (185 passing tests). The remaining MCP tools and integration tests (Phases 5–6) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
+> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), authentication (`src/auth/`), the API gateway (`src/gateway/`), and all five MCP tools (`src/tools/`) are implemented and tested (222 passing tests). The end-to-end integration tests + documentation polish (Phase 6) are still outstanding — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -41,10 +41,12 @@ MCP/
 │   │   └── handlers.py        # Response normalization, size enforcement, error mapping
 │   ├── models/                # Pydantic data models (planned)
 │   │   └── data_models.py
-│   ├── tools/                 # MCP tool definitions (Phase 2 list_apis ✓; rest planned)
-│   │   ├── builtin.py         # list_apis tool (implemented ✓)
-│   │   ├── registry.py        # ToolRegistry / ToolSpec (implemented ✓)
-│   │   └── mcp_tools.py       # fetch_data/send_data/execute_graphql/get_status (planned)
+│   ├── tools/                 # MCP tool definitions (implemented ✓)
+│   │   ├── builtin.py         # list_apis tool
+│   │   ├── registry.py        # ToolRegistry / ToolSpec
+│   │   ├── context.py         # ToolContext dependency container
+│   │   ├── auth_resolver.py   # auth.type branching (oauth2/bearer/api_key/None)
+│   │   └── mcp_tools.py       # fetch_data/send_data/execute_graphql/get_status
 │   ├── config.py              # API config loader with ${VAR} substitution (implemented ✓)
 │   └── events/                # Activity logging (implemented ✓)
 │       ├── schemas.py         # Pydantic models (audit/debug/usage/insight)
@@ -61,9 +63,9 @@ MCP/
 │   ├── auth/                  # Unit tests for src/auth/ (49 cases — implemented ✓)
 │   ├── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
 │   ├── gateway/               # Unit tests for src/gateway/ (50 cases — implemented ✓)
-│   ├── tools/                 # Unit tests for src/tools/ (Phase 2 — implemented ✓)
+│   ├── tools/                 # Unit + integration tests for src/tools/ (35 cases — implemented ✓)
 │   ├── test_config.py         # Config loader tests
-│   └── test_server.py         # Server bootstrap tests
+│   └── test_server.py         # Server bootstrap + _build_oauth_configs tests
 ├── .claude/commands/          # Slash commands for the dev workflow
 │   ├── generate-prp.md        #   /generate-prp INITIAL.md  → PRPs/{feature}.md
 │   └── execute-prp.md         #   /execute-prp PRPs/{...}   → implements + validates
@@ -216,7 +218,7 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 185 tests passing across src/events/, src/auth/, src/gateway/, src/config.py, src/server.py, src/tools/.
+# Currently 222 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, src/config.py, src/server.py.
 ```
 
 ### Running the MCP Server
@@ -225,10 +227,10 @@ pytest tests/events/test_writers.py -v
 python -m src.server
 ```
 
-The server boots, loads `config/api_configs.json`, starts the Recorder, and registers
-the `list_apis` tool. Tools that hit external APIs (`fetch_data`, `send_data`,
-`execute_graphql`, `get_status`) require Phase 4 + 5 to be implemented before they
-become available.
+The server boots, loads `config/api_configs.json`, starts the Recorder, builds the
+`ToolContext`, and registers all five tools (`list_apis`, `fetch_data`, `send_data`,
+`execute_graphql`, `get_status`). On SIGINT/SIGTERM the Recorder queue drains and
+the server exits cleanly.
 
 ### Connecting to Claude Code
 
@@ -307,8 +309,8 @@ directly.
 | 2 | Core MCP Server | ✅ done — `list_apis`, registry, config loader, graceful shutdown |
 | 3 | Authentication (OAuth + keyring) | ✅ done — PKCE flow, callback on `127.0.0.1`, `Credentials` with concurrent-refresh lock, 49 tests |
 | 4 | API Gateway (REST + GraphQL) | ✅ done — `RestClient` + `GraphQLClient`, retry on 429/5xx + transport errors, redacted logging, response normalization, GraphQL partial-success preserved, 50 tests |
-| 5 | Tools & Integration | ⏳ pending |
-| 6 | Testing & Polish | ⏳ ongoing |
+| 5 | Tools & Integration | ✅ done — `fetch_data`/`send_data`/`execute_graphql`/`get_status`, `auth.type` branching (oauth2/bearer/api_key/null), Recorder triple per call, secret redaction in insight events, 35 tests |
+| 6 | Testing & Polish | ⏳ pending — end-to-end integration tests, README/docs polish, refined example config |
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).

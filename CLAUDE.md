@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-The project is in **early development**. The activity logging subsystem (`src/events/`), the core MCP server (`src/server.py`), the config loader (`src/config.py`), the tool registry with `list_apis` (`src/tools/`), the authentication subsystem (`src/auth/`), and the API gateway (`src/gateway/`) are implemented and tested (185 passing unit tests). Phases 5–6 (remaining MCP tools, integration tests + docs) are not yet implemented.
+The project is in **early development**. The activity logging subsystem (`src/events/`), the core MCP server (`src/server.py`), the config loader (`src/config.py`), the authentication subsystem (`src/auth/`), the API gateway (`src/gateway/`), and the full MCP tool surface (`src/tools/`: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`) are implemented and tested (222 passing unit tests). Phase 6 (end-to-end integration tests + docs polish) is the only remaining work.
 
 ## Architecture
 
@@ -18,10 +18,12 @@ What this file pins:
 
 - **`src/events/`** is the project's reference implementation (Phase 7, complete). All
   new code mirrors its conventions. See "Reference Implementation" section below.
-- **`src/server.py`, `src/config.py`, `src/tools/` (Phase 2)**, **`src/auth/` (Phase 3)**,
-  and **`src/gateway/` (Phase 4)** are also complete and follow the `src/events/` patterns.
-- The remaining tools in `src/tools/mcp_tools.py` (Phase 5) and the integration tests /
-  docs (Phase 6) are still planned — see roadmap in `docs/plan.md`.
+- **`src/server.py`, `src/config.py` (Phase 2)**, **`src/auth/` (Phase 3)**,
+  **`src/gateway/` (Phase 4)**, and **`src/tools/` (Phase 5 — `fetch_data`/`send_data`/
+  `execute_graphql`/`get_status` plus the existing `list_apis`)** are also complete and
+  follow the `src/events/` patterns.
+- The end-to-end integration tests + docs polish (Phase 6) is still planned — see
+  roadmap in `docs/plan.md`.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
