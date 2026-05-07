@@ -74,7 +74,7 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 
 ## Implementation Strategy
 
-### Phase 1: Project Setup ✓ (mostly complete)
+### Phase 1: Project Setup ✓ (complete)
 1. Initialize Python project structure
 2. Create `requirements.txt` with dependencies:
    - `mcp` (Model Context Protocol SDK)
@@ -90,17 +90,21 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 7. Basic `README.md` with architecture overview
 8. _Remaining_: initial `config/api_configs.json` template
 
-### Phase 2: Core MCP Server
-1. Implement basic MCP server initialization
-2. Define tool schemas and handlers
-3. Set up logging (stderr only — stdout is reserved for the MCP protocol)
-4. Async request processing pipeline
+### Phase 2: Core MCP Server ✓ (complete)
+1. ✓ MCP server initialization (`src/server.py`)
+2. ✓ Tool registry (`ToolSpec`, `ToolRegistry`) with `list_apis` built-in tool
+3. ✓ Config loader with `${VAR}` substitution (`src/config.py`)
+4. ✓ Logging to stderr only; stdout reserved for the MCP protocol
+5. ✓ Async request pipeline + graceful SIGINT/SIGTERM shutdown
 
-### Phase 3: Authentication
-1. Implement OAuth 2.0 authorization code flow
-2. Local callback HTTP server (binds to `localhost` only, only during the flow)
-3. Credential storage via `keyring`
-4. Token refresh and validation
+### Phase 3: Authentication ✓ (complete)
+1. ✓ OAuth 2.0 authorization code flow with PKCE (`src/auth/oauth.py`)
+2. ✓ Local callback HTTP server bound to `127.0.0.1` (NOT `localhost`), only during the flow
+3. ✓ HTTPS-only validator on `authorize_url` / `token_url`
+4. ✓ Credential storage via `keyring`, JSON-serialized `TokenInfo` (`src/auth/credentials.py`)
+5. ✓ Token refresh with `asyncio.Lock` per `api_id` to prevent concurrent-refresh races
+6. ✓ Read-only `peek()` API for status checks that must not trigger OAuth
+7. ✓ `Field(repr=False)` on secret fields keeps tokens out of `repr()` / log output
 
 ### Phase 4: API Gateway
 1. Build generic HTTP client supporting multiple auth methods
@@ -109,7 +113,7 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 4. Implement central redaction helper for sensitive data in logs
 
 ### Phase 5: Tools & Integration
-1. Implement each MCP tool (`fetch_data`, `send_data`, `execute_graphql`, `list_apis`, `get_status`)
+1. Implement remaining MCP tools (`fetch_data`, `send_data`, `execute_graphql`, `get_status`); `list_apis` already shipped in Phase 2
 2. Standardize response shape (success: `data` + `metadata`; error: `error` with code/message/details)
 3. Implement large-response handling (truncate + metadata; only return `RESPONSE_TOO_LARGE` when truncation isn't safe — e.g., binary/streaming)
 4. Integrate auto-authentication with tool execution
@@ -130,18 +134,22 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 6. Per-API payload depth controls in `config/api_configs.json` (`metadata`/`summary`/`full`)
 7. Logs are operator-only — **not** exposed via any MCP tool
 
-## Critical Files to Create
-- `src/server.py` — MCP server entry point
-- `src/auth/oauth.py` — OAuth implementation
-- `src/auth/credentials.py` — Keyring-backed credential store
-- `src/gateway/api_client.py` — Generic REST/GraphQL client
-- `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`)
-- `src/models/data_models.py` — Pydantic models for responses
-- `src/tools/mcp_tools.py` — MCP tool definitions (must call `Recorder.record_*`)
+## Critical Files (status)
+- `src/server.py` — MCP server entry point ✓ **implemented**
+- `src/config.py` — API config loader with `${VAR}` substitution ✓ **implemented**
+- `src/tools/spec.py`, `src/tools/registry.py`, `src/tools/builtin.py` — tool registry + `list_apis` ✓ **implemented**
+- `src/auth/oauth.py` — OAuth 2.0 + PKCE flow ✓ **implemented**
+- `src/auth/credentials.py` — Keyring-backed credential store with concurrent-refresh lock ✓ **implemented**
 - `src/events/` — Activity logging (schemas, writers, retention, recorder) ✓ **implemented**
-- `config/api_configs.json` — API configuration template
+- `src/gateway/api_client.py` — Generic REST/GraphQL client (planned, Phase 4)
+- `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`) (planned, Phase 4)
+- `src/models/data_models.py` — Pydantic models for responses (planned, Phase 5)
+- `src/tools/mcp_tools.py` — `fetch_data`/`send_data`/`execute_graphql`/`get_status` (planned, Phase 5)
+- `config/api_configs.json` — API configuration template (gitignored runtime file; example committed at `config/api_configs.example.json`)
 - `tests/events/` — 27 passing unit tests for `src/events/` ✓ **implemented**
-- `tests/auth/`, `tests/gateway/`, `tests/tools/` — integration tests for remaining phases
+- `tests/auth/` — 49 passing unit tests for `src/auth/` ✓ **implemented**
+- `tests/test_config.py`, `tests/test_server.py`, `tests/tools/` — Phase 2 unit tests ✓ **implemented**
+- `tests/gateway/`, `tests/integration/` — integration tests for remaining phases (planned, Phase 4 + 6)
 
 ## Technology Stack
 
@@ -161,7 +169,7 @@ See [`README.md` § Tech Stack](../README.md). Source of truth for runtime versi
 4. **Security validation**:
    - Verify credentials never appear in logs (DEBUG and INFO levels)
    - Confirm tokens encrypted in keyring
-   - Confirm callback server only listens on `localhost` and only during OAuth
+   - Confirm callback server only listens on `127.0.0.1` (not `localhost`) and only during OAuth
 
 ## Future Scalability
 - **MCP App evolution** — extract this into a backend behind a web frontend

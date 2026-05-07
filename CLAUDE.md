@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-The project is in **early development**. The activity logging subsystem (`src/events/`) is implemented and tested (27 passing unit tests). Phases 2–5 (server, auth, gateway, tools) are not yet implemented.
+The project is in **early development**. The activity logging subsystem (`src/events/`), the core MCP server (`src/server.py`), the config loader (`src/config.py`), the tool registry with `list_apis` (`src/tools/`), and the authentication subsystem (`src/auth/`) are implemented and tested (124 passing unit tests). Phases 4–6 (gateway, remaining tools, integration tests + docs) are not yet implemented.
 
 ## Architecture
 
@@ -18,7 +18,10 @@ What this file pins:
 
 - **`src/events/`** is the project's reference implementation (Phase 7, complete). All
   new code mirrors its conventions. See "Reference Implementation" section below.
-- All other modules under `src/` are planned — see roadmap in `docs/plan.md`.
+- **`src/server.py`, `src/config.py`, `src/tools/` (Phase 2)** and **`src/auth/` (Phase 3)**
+  are also complete and follow the `src/events/` patterns.
+- **`src/gateway/` (Phase 4)**, the remaining tools in `src/tools/mcp_tools.py` (Phase 5),
+  and the integration tests / docs (Phase 6) are still planned — see roadmap in `docs/plan.md`.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
@@ -47,7 +50,7 @@ What this file pins:
 ### Security Rules (Strict)
 - Never log tokens, secrets, or full request/response bodies
 - Never write credentials to plaintext files
-- OAuth callback server binds only to `localhost`, only during the flow
+- OAuth callback server binds only to `127.0.0.1` (NOT `localhost` — some browsers treat them as different origins for OAuth state tracking), only during the flow
 - All `.env` and credential files listed in `.gitignore`
 
 ## Debug & Logging Strategy

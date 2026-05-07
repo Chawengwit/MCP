@@ -14,12 +14,12 @@
 
 | Phase | PRP | Status |
 |-------|-----|--------|
-| 3 — Authentication | [PRPs/phase3-auth.md](PRPs/phase3-auth.md) | Ready to execute |
+| 3 — Authentication | [PRPs/phase3-auth.md](PRPs/phase3-auth.md) | ✅ Done — 49 tests, full security checklist verified |
 | 4 — API Gateway | [PRPs/phase4-gateway.md](PRPs/phase4-gateway.md) | Ready to execute |
-| 5 — Tools & Integration | [PRPs/phase5-tools.md](PRPs/phase5-tools.md) | Ready to execute (depends on 3 + 4) |
-| 6 — Testing & Documentation | [PRPs/phase6-testing-docs.md](PRPs/phase6-testing-docs.md) | Ready to execute (depends on 3 + 4 + 5) |
+| 5 — Tools & Integration | [PRPs/phase5-tools.md](PRPs/phase5-tools.md) | Ready to execute (depends on 4) |
+| 6 — Testing & Documentation | [PRPs/phase6-testing-docs.md](PRPs/phase6-testing-docs.md) | Ready to execute (depends on 4 + 5) |
 
-To execute a phase: `/execute-prp PRPs/phase3-auth.md` (then 4 → 5 → 6).
+To execute the next phase: `/execute-prp PRPs/phase4-gateway.md` (then 5 → 6).
 
 ---
 

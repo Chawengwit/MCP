@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Early Development.** Activity logging (`src/events/`) is implemented and tested. Core MCP server, auth, gateway, and tools (Phases 2–5) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
+> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), and authentication (`src/auth/`) are implemented and tested (124 passing tests). API gateway, tools, and integration tests (Phases 4–6) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -27,22 +27,25 @@ This MCP server provides:
 
 ## Architecture
 
-Files marked **(planned)** are not yet implemented. Files without that marker exist today.
+Files marked **(implemented ✓)** exist today. Files marked **(planned)** are upcoming phases.
 
 ```
 MCP/
 ├── src/
-│   ├── server.py              # MCP server entry point (planned)
-│   ├── auth/                  # OAuth 2.0 + keyring (planned)
-│   │   ├── oauth.py
-│   │   └── credentials.py
+│   ├── server.py              # MCP server entry point (implemented ✓)
+│   ├── auth/                  # OAuth 2.0 + keyring (implemented ✓)
+│   │   ├── oauth.py           # PKCE auth-code flow, callback server bound to 127.0.0.1
+│   │   └── credentials.py     # Keyring-backed store with peek/get/store/clear
 │   ├── gateway/               # REST/GraphQL HTTP client (planned)
 │   │   ├── api_client.py
 │   │   └── handlers.py
 │   ├── models/                # Pydantic data models (planned)
 │   │   └── data_models.py
-│   ├── tools/                 # MCP tool definitions (planned)
-│   │   └── mcp_tools.py
+│   ├── tools/                 # MCP tool definitions (Phase 2 list_apis ✓; rest planned)
+│   │   ├── builtin.py         # list_apis tool (implemented ✓)
+│   │   ├── registry.py        # ToolRegistry / ToolSpec (implemented ✓)
+│   │   └── mcp_tools.py       # fetch_data/send_data/execute_graphql/get_status (planned)
+│   ├── config.py              # API config loader with ${VAR} substitution (implemented ✓)
 │   └── events/                # Activity logging (implemented ✓)
 │       ├── schemas.py         # Pydantic models (audit/debug/usage/insight)
 │       ├── redaction.py       # Sensitive data redaction
@@ -50,12 +53,16 @@ MCP/
 │       ├── writers.py         # Async JSONL writer + queue
 │       └── recorder.py        # Public Recorder API
 ├── config/
-│   ├── api_configs.json       # API service configurations (planned)
+│   ├── api_configs.json       # API service configurations (gitignored)
 │   └── api_configs.example.json  # Template (committed)
 ├── docs/
 │   └── plan.md                # Implementation plan / roadmap
 ├── tests/
-│   └── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
+│   ├── auth/                  # Unit tests for src/auth/ (34 cases — implemented ✓)
+│   ├── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
+│   ├── tools/                 # Unit tests for src/tools/ (Phase 2 — implemented ✓)
+│   ├── test_config.py         # Config loader tests
+│   └── test_server.py         # Server bootstrap tests
 ├── .claude/commands/          # Slash commands for the dev workflow
 │   ├── generate-prp.md        #   /generate-prp INITIAL.md  → PRPs/{feature}.md
 │   └── execute-prp.md         #   /execute-prp PRPs/{...}   → implements + validates
@@ -152,7 +159,7 @@ cp .env.example .env
 # OAuth credentials (per provider)
 OAUTH_CLIENT_ID=your_client_id
 OAUTH_CLIENT_SECRET=your_client_secret
-OAUTH_REDIRECT_URI=http://localhost:8765/callback
+OAUTH_REDIRECT_URI=http://127.0.0.1:8765/callback  # NOT localhost — see Security section
 
 # Server settings
 MCP_LOG_LEVEL=INFO              # DEBUG | INFO | WARN | ERROR
@@ -208,15 +215,19 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 27 tests for src/events/ — all passing.
+# Currently 124 tests passing across src/events/, src/auth/, src/config.py, src/server.py, src/tools/.
 ```
 
-### Running the MCP Server (planned)
+### Running the MCP Server
 
 ```bash
 python -m src.server
 ```
-> Phase 2 — `src/server.py` is not yet implemented.
+
+The server boots, loads `config/api_configs.json`, starts the Recorder, and registers
+the `list_apis` tool. Tools that hit external APIs (`fetch_data`, `send_data`,
+`execute_graphql`, `get_status`) require Phase 4 + 5 to be implemented before they
+become available.
 
 ### Connecting to Claude Code
 
@@ -291,9 +302,9 @@ directly.
 
 | Phase | What | Status |
 |-------|------|--------|
-| 1 | Project Setup | ✅ mostly done |
-| 2 | Core MCP Server | ⏳ pending |
-| 3 | Authentication (OAuth + keyring) | ⏳ pending |
+| 1 | Project Setup | ✅ done |
+| 2 | Core MCP Server | ✅ done — `list_apis`, registry, config loader, graceful shutdown |
+| 3 | Authentication (OAuth + keyring) | ✅ done — PKCE flow, callback on `127.0.0.1`, `Credentials` with concurrent-refresh lock, 49 tests |
 | 4 | API Gateway (REST + GraphQL) | ⏳ pending |
 | 5 | Tools & Integration | ⏳ pending |
 | 6 | Testing & Polish | ⏳ ongoing |
@@ -307,9 +318,10 @@ Future scalability ideas (web UI, multi-tenant, caching, etc.) live in
 
 - All credentials stored in OS-level secure keyring (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux)
 - `.env` file excluded from version control via `.gitignore`
-- OAuth uses standard authorization code flow (no implicit grant)
-- Tokens never logged or exposed in error messages
-- Local callback server only listens on `localhost` and only during the OAuth flow
+- OAuth uses standard authorization code flow with **PKCE** (no implicit grant)
+- Tokens never logged or exposed in error messages — Pydantic `Field(repr=False)` keeps secret fields out of `repr()` and f-string output
+- `OAuthConfig` rejects non-HTTPS `authorize_url` / `token_url` at validation time
+- Local callback server binds to **`127.0.0.1`** (not `localhost`) and only during the OAuth flow; closes immediately after the auth code is received
 
 ## License
 
