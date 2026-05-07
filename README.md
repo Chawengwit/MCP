@@ -50,36 +50,30 @@ MCP/
 │       ├── writers.py         # Async JSONL writer + queue
 │       └── recorder.py        # Public Recorder API
 ├── config/
-│   └── api_configs.json       # API service configurations (planned)
+│   ├── api_configs.json       # API service configurations (planned)
+│   └── api_configs.example.json  # Template (committed)
 ├── docs/
-│   └── plan.md                # Implementation plan
+│   └── plan.md                # Implementation plan / roadmap
 ├── tests/
-│   └── events/                # Unit tests for src/events/ (27 tests, all passing)
+│   └── events/                # Unit tests for src/events/ (27 passing tests)
+├── .claude/commands/          # Slash commands for the dev workflow
+│   ├── generate-prp.md        #   /generate-prp INITIAL.md  → PRPs/{feature}.md
+│   └── execute-prp.md         #   /execute-prp PRPs/{...}   → implements + validates
+├── PRPs/
+│   ├── templates/prp_base.md  # Template each PRP fills in
+│   └── {feature}.md           # Generated implementation blueprints
+├── INITIAL.md                 # Per-feature scope delta (input to /generate-prp)
 ├── .env.example               # Environment variables template
 ├── .gitignore                 # Excludes secrets and build artifacts
-├── pyproject.toml             # pytest configuration
+├── pyproject.toml             # pytest + ruff + mypy configuration
 ├── requirements.txt           # Runtime dependencies
-├── requirements-dev.txt       # Dev/test dependencies (adds pytest)
-├── CLAUDE.md                  # Claude Code guidance
+├── requirements-dev.txt       # Dev/test deps (pytest, ruff, mypy)
+├── CLAUDE.md                  # Project rules + Context Engineering workflow
 └── README.md                  # This file
 ```
 
-### Module Responsibilities
+### MCP Tools
 
-#### Core MCP Server (`src/server.py`)
-- Initializes the MCP server using the Python `mcp` SDK
-- Registers tools (`fetch_data`, `send_data`, `execute_graphql`, etc.)
-- Handles tool execution lifecycle and error responses
-
-#### Authentication (`src/auth/`)
-- **oauth.py**: OAuth 2.0 authorization code flow with automatic browser popup. Spins up a local HTTP callback server to receive the auth code. Supports multiple providers (Google, GitHub, custom).
-- **credentials.py**: Secure storage of access/refresh tokens via the system keyring. Handles token validation and expiration.
-
-#### API Gateway (`src/gateway/`)
-- **api_client.py**: Generic async HTTP client supporting REST (GET/POST/PUT/DELETE) and GraphQL (queries/mutations). Handles Bearer tokens, API keys, Basic auth.
-- **handlers.py**: Normalizes responses across different APIs and parses GraphQL errors separately from HTTP errors.
-
-#### MCP Tools (`src/tools/mcp_tools.py`)
 | Tool | Description |
 |------|-------------|
 | `fetch_data` | GET data from a configured API (auto-OAuth if required) |
@@ -88,17 +82,9 @@ MCP/
 | `list_apis` | List all configured API services |
 | `get_status` | Show authentication and connection status |
 
-#### Activity Logging (`src/events/`)
-Records every tool invocation across four categories to JSONL files (one file per category per month). **Operator-only — not exposed to Claude as an MCP tool.**
-
-| Category | Path | Purpose |
-|----------|------|---------|
-| `audit` | `logs/audit/YYYY-MM.jsonl` | Who/when/what — security & compliance |
-| `debug` | `logs/debug/YYYY-MM.jsonl` | Full HTTP exchange (redacted) |
-| `usage` | `logs/usage/YYYY-MM.jsonl` | Per-call metrics (latency, sizes) |
-| `insight` | `logs/insight/YYYY-MM.jsonl` | Tool args + response summaries |
-
-Retention: 1 year (configurable). Writers are async non-blocking; failures emit stderr warnings but never break tool calls. See [CLAUDE.md](CLAUDE.md#activity-logging-srcevents) for the full contract.
+Per-module responsibilities and detailed module-by-module breakdown:
+[`docs/plan.md` § Architecture Overview](docs/plan.md). Activity logging contract
+(four categories, retention, redaction): [`CLAUDE.md` § Activity Logging](CLAUDE.md).
 
 ## Authentication Flow
 
@@ -261,111 +247,61 @@ The first time Claude uses a tool requiring authentication, your browser will op
 
 ## Response Format
 
-All MCP tools return structured JSON for consistent parsing.
+All MCP tools return structured JSON: `{data, metadata}` on success, `{error}` on failure.
+Large responses truncate (success + cursor) where safe; binary/streaming emit
+`RESPONSE_TOO_LARGE`. GraphQL surfaces partial-success (data + errors).
 
-**Success:**
-```json
-{
-  "data": <api response>,
-  "metadata": { "source": "...", "endpoint": "...", "timestamp": "...", "duration_ms": 142 }
-}
-```
-
-**Error:**
-```json
-{
-  "error": { "code": "AUTH_REQUIRED", "message": "...", "details": { ... } }
-}
-```
-
-**Standard error codes:** `AUTH_REQUIRED`, `AUTH_FAILED`, `API_NOT_CONFIGURED`, `ENDPOINT_NOT_FOUND`, `RATE_LIMITED`, `UPSTREAM_ERROR`, `VALIDATION_ERROR`, `RESPONSE_TOO_LARGE`.
-
-JSON/text responses larger than `MCP_MAX_RESPONSE_BYTES` are **truncated and returned as success** with `metadata.truncated: true` plus pagination cursors. Only binary or streaming payloads emit `RESPONSE_TOO_LARGE` (they can't be safely truncated). Binary data is base64-encoded with `content_type` metadata. GraphQL responses surface both `data` and `errors` so partial successes remain usable.
-
-See [CLAUDE.md](CLAUDE.md#response-format-conventions) for full details.
+For the full spec — exact field shapes, the error-code table, the truncation rule, and
+the GraphQL handling — see
+[`CLAUDE.md` § Response Format Conventions](CLAUDE.md).
 
 ## Debugging
 
-### Quick Diagnostics
-| Symptom | Try |
-|---------|-----|
-| Tool hangs on first call | Check `OAUTH_CALLBACK_PORT` is free |
-| `keyring.errors.NoKeyringError` | Install `keyrings.alt` (headless Linux) |
-| 401 after working previously | Delete keyring entry, re-authenticate |
-| GraphQL "succeeds" but no data | Check `errors[]` in response body |
-| Truncated response | Use pagination or raise `MCP_MAX_RESPONSE_BYTES` |
+To enable verbose tracing:
 
-### Enabling Debug Mode
 ```bash
 MCP_DEBUG=true MCP_LOG_LEVEL=DEBUG python -m src.server
 ```
-This dumps full HTTP exchanges (with secrets redacted) to `stderr`. **Never to `stdout`** — `stdout` carries the MCP JSON-RPC protocol stream.
 
-### Logging Notes
-- All logs go to `stderr` (or optional `MCP_LOG_FILE`).
-- Tokens, API keys, `Authorization` headers, and credentials are auto-redacted before logging.
-- Logs are structured JSON (one event per line) for easy parsing with `jq`.
+All logs go to **stderr** (stdout is reserved for the MCP JSON-RPC protocol). Secrets are
+auto-redacted.
 
-See [CLAUDE.md](CLAUDE.md#debug--logging-strategy) for full debugging strategy.
+For the full debug/logging strategy, env-var reference, and the symptom→cause→fix table,
+see [`CLAUDE.md` § Debug & Logging Strategy](CLAUDE.md).
+
+## Development Workflow
+
+This project uses a **Context Engineering** workflow for non-trivial features.
+The full description lives in
+[`CLAUDE.md` § Context Engineering Workflow](CLAUDE.md). Quick summary:
+
+```
+1. Edit INITIAL.md          ← describe ONE feature (delta vs docs/plan.md)
+2. /generate-prp INITIAL.md ← AI researches and writes PRPs/{feature}.md
+3. /execute-prp PRPs/{...}  ← AI implements + runs ruff/mypy/pytest until green
+```
+
+`src/events/` is the project's reference implementation — new code mirrors its
+patterns. See [`CLAUDE.md` § Reference Implementation](CLAUDE.md).
+
+For small fixes (single-line changes, doc edits, etc.) skip the workflow and edit
+directly.
 
 ## Development Roadmap
 
-### Phase 1: Project Setup
-- [x] `requirements.txt` with pinned dependencies
-- [x] `requirements-dev.txt` for pytest and pytest-asyncio
-- [x] `.gitignore` for secrets, caches, and `logs/`
-- [x] `.env.example` documenting environment variables
-- [x] `pyproject.toml` for pytest configuration
-- [x] Initialize `src/` package structure (`src/__init__.py`)
-- [ ] Initial `config/api_configs.json` template
+| Phase | What | Status |
+|-------|------|--------|
+| 1 | Project Setup | ✅ mostly done |
+| 2 | Core MCP Server | ⏳ pending |
+| 3 | Authentication (OAuth + keyring) | ⏳ pending |
+| 4 | API Gateway (REST + GraphQL) | ⏳ pending |
+| 5 | Tools & Integration | ⏳ pending |
+| 6 | Testing & Polish | ⏳ ongoing |
+| 7 | Activity Logging (`src/events/`) | ✅ done — 27 passing tests |
 
-### Phase 2: Core MCP Server
-- [ ] MCP server initialization
-- [ ] Tool schema definitions
-- [ ] Logging and error handling
-
-### Phase 3: Authentication
-- [ ] OAuth 2.0 authorization code flow
-- [ ] Local callback HTTP server
-- [ ] Keyring-based token storage
-- [ ] Token refresh logic
-
-### Phase 4: API Gateway
-- [ ] Generic REST client
-- [ ] GraphQL query/mutation support
-- [ ] Multi-auth method support
-- [ ] Request/response handlers
-
-### Phase 5: Tools & Integration
-- [ ] Implement `fetch_data` tool
-- [ ] Implement `send_data` tool
-- [ ] Implement `execute_graphql` tool
-- [ ] Implement `list_apis` and `get_status` tools
-
-### Phase 6: Testing & Polish
-- [ ] Unit tests per module
-- [ ] Integration tests with mock APIs
-- [ ] Configuration examples
-- [ ] User documentation
-
-### Phase 7: Activity Logging (`src/events/`) ✓
-- [x] Pydantic schemas for `audit`, `debug`, `usage`, `insight`
-- [x] Centralized redaction helper (headers, body keys, URL query params)
-- [x] Async JSONL writer with buffered queue and per-month rotation
-- [x] Retention cleanup (1 year, never deletes current month)
-- [x] Public `Recorder` API (`Recorder.from_env()`, `record_audit/debug/usage/insight`)
-- [x] Unit tests (27 passing)
-- [ ] Wire `Recorder` into `src/tools/` and `src/gateway/` once those exist
-
-## Future Enhancements
-
-- **MCP App**: Standalone web interface as a frontend on top of this gateway
-- **Persistent Storage**: SQLite/PostgreSQL for data history and audit logs
-- **Rate Limiting**: Per-API rate limiting and request queuing
-- **Caching**: Response caching with configurable TTL
-- **Multi-Tenant**: Support multiple users with separate credential stores
-- **Webhooks**: Receive data via incoming webhooks
-- **Data Transformation Pipelines**: Chain transformations across APIs
+Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
+Future scalability ideas (web UI, multi-tenant, caching, etc.) live in
+[`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Security
 

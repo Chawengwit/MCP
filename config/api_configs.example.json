@@ -1,0 +1,89 @@
+{
+  "_comment": "Template for config/api_configs.json. Copy this file to api_configs.json and fill in real values. NEVER commit secrets — use ${ENV_VAR} placeholders and put actual values in .env.",
+  "apis": {
+    "example_rest_api": {
+      "type": "rest",
+      "base_url": "https://api.example.com",
+      "auth": {
+        "type": "oauth2",
+        "provider": "generic",
+        "client_id": "${EXAMPLE_REST_CLIENT_ID}",
+        "authorize_url": "https://api.example.com/oauth/authorize",
+        "token_url": "https://api.example.com/oauth/token",
+        "redirect_uri": "http://localhost:8765/callback",
+        "scopes": ["read", "write"]
+      },
+      "endpoints": {
+        "list_users": {
+          "method": "GET",
+          "path": "/v1/users",
+          "query_params": ["limit", "cursor"]
+        },
+        "create_user": {
+          "method": "POST",
+          "path": "/v1/users",
+          "body_schema": "UserCreate"
+        }
+      },
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "summary",
+        "redact_fields": ["ssn", "credit_card", "date_of_birth"]
+      },
+      "limits": {
+        "timeout_seconds": 30,
+        "max_retries": 3
+      }
+    },
+
+    "example_graphql_api": {
+      "type": "graphql",
+      "base_url": "https://api.example.com/graphql",
+      "auth": {
+        "type": "bearer",
+        "token_env": "EXAMPLE_GRAPHQL_TOKEN"
+      },
+      "endpoints": {
+        "get_viewer": {
+          "operation": "query",
+          "query": "query { viewer { id login } }"
+        }
+      },
+      "logging": {
+        "request_payload": "summary",
+        "response_payload": "summary",
+        "redact_fields": []
+      },
+      "limits": {
+        "timeout_seconds": 30,
+        "max_retries": 2
+      }
+    },
+
+    "example_apikey_api": {
+      "type": "rest",
+      "base_url": "https://api.example.com/v2",
+      "auth": {
+        "type": "api_key",
+        "header_name": "X-API-Key",
+        "key_env": "EXAMPLE_APIKEY"
+      },
+      "endpoints": {
+        "search": {
+          "method": "GET",
+          "path": "/search",
+          "query_params": ["q", "page"]
+        }
+      },
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "metadata",
+        "redact_fields": []
+      },
+      "limits": {
+        "timeout_seconds": 15,
+        "max_retries": 1
+      }
+    }
+  }
+}

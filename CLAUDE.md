@@ -10,61 +10,21 @@ The project is in **early development**. The activity logging subsystem (`src/ev
 
 ## Architecture
 
-Items marked **(planned)** don't exist yet. Everything else is implemented.
+For the full directory tree, module responsibilities, and tech stack, see
+[`README.md` § Architecture](README.md). For phase-by-phase implementation breakdown,
+see [`docs/plan.md`](docs/plan.md).
 
-```
-src/
-├── server.py              # MCP server entry point (planned)
-├── auth/                  # OAuth 2.0 + keyring (planned)
-│   ├── oauth.py
-│   └── credentials.py
-├── gateway/               # REST/GraphQL client (planned)
-│   ├── api_client.py
-│   └── handlers.py
-├── models/                # Generic Pydantic data models (planned)
-│   └── data_models.py
-├── tools/                 # MCP tool definitions (planned)
-│   └── mcp_tools.py
-└── events/                # Activity logging — implemented ✓
-    ├── schemas.py         # Pydantic models per category
-    ├── redaction.py       # Header/body/URL redaction helpers
-    ├── retention.py       # Cleanup of files older than retention
-    ├── writers.py         # Async JSONL writer + queue + rotation
-    └── recorder.py        # Public Recorder API
+What this file pins:
 
-config/
-└── api_configs.json       # Per-API configuration (planned)
-
-tests/
-└── events/                # 27 passing tests for src/events/
-```
+- **`src/events/`** is the project's reference implementation (Phase 7, complete). All
+  new code mirrors its conventions. See "Reference Implementation" section below.
+- All other modules under `src/` are planned — see roadmap in `docs/plan.md`.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
 - **Auto-OAuth**: Tools detect missing/expired credentials and automatically trigger browser popup.
 - **Async throughout**: Use `httpx` async client, `asyncio` for I/O.
 - **Secure by default**: Credentials never written to disk in plaintext — always via `keyring`.
-
-## Tech Stack
-
-- **Python 3.10+**
-- **mcp** — Model Context Protocol Python SDK
-- **httpx** — Async HTTP (REST + GraphQL)
-- **keyring** — Secure credential storage
-- **pydantic** — Data validation
-- **python-dotenv** — Environment configuration
-
-## MCP Tools (planned)
-
-| Tool | Purpose |
-|------|---------|
-| `fetch_data` | GET request to a configured API |
-| `send_data` | POST/PUT request to a configured API |
-| `execute_graphql` | Run GraphQL query/mutation |
-| `list_apis` | List configured API services |
-| `get_status` | Authentication and connection status |
-
-All data-modifying tools auto-trigger OAuth popup when credentials are missing or expired.
 
 ## Development Conventions
 
@@ -210,28 +170,6 @@ For paginated APIs, always surface pagination tokens/cursors in `metadata` so Cl
   ```
 - Do NOT collapse partial-success into a flat error — Claude can use the partial data.
 
-## Common Commands
-
-```bash
-# Install runtime dependencies
-pip install -r requirements.txt
-
-# Install dev/test dependencies (adds pytest, pytest-asyncio)
-pip install -r requirements-dev.txt
-
-# Run all tests (27 currently, all in tests/events/)
-pytest tests/
-
-# Run a single test file with verbose output
-pytest tests/events/test_writers.py -v
-
-# Run a single test by name
-pytest tests/events/test_writers.py::test_writer_drains_on_stop
-
-# Run the MCP server (planned — Phase 2 not yet implemented)
-python -m src.server
-```
-
 ## Activity Logging (`src/events/`)
 
 The gateway records every tool invocation across **four separate categories** to JSONL files. These logs are operator-only — **no MCP tool exposes them to Claude**.
@@ -308,17 +246,55 @@ Replacement: the literal string `<redacted>` (preserves the field name and JSON 
 - **Cleanup runs in a thread**: `cleanup_old_logs` uses synchronous `pathlib`, scheduled via `asyncio.to_thread` to keep the event loop responsive.
 - **`Recorder.from_env()` reads env at construction** — changes to `MCP_LOG_*` after start are not picked up.
 
-## Implementation Phases (Reference)
+## Context Engineering Workflow
 
-The committed plan is at [`docs/plan.md`](docs/plan.md). Seven phases:
+This project uses a **Context Engineering** workflow for non-trivial features. The two-step
+loop is:
 
-1. **Project Setup** — structure, dependencies, `.gitignore` (mostly done)
-2. **Core MCP Server** — server bootstrap, tool registration
-3. **Authentication** — OAuth flow, keyring storage, token refresh
-4. **API Gateway** — generic REST + GraphQL client
-5. **Tools & Integration** — implement each MCP tool
-6. **Testing & Documentation** — unit/integration tests, examples
-7. **Activity Logging** (`src/events/`) — **implemented ✓**
+```
+1. Edit INITIAL.md          ← describe ONE feature (FEATURE / EXAMPLES / DOCS / CONSIDERATIONS)
+2. /generate-prp INITIAL.md ← AI researches and produces PRPs/{feature}.md
+3. /execute-prp PRPs/{...}  ← AI implements + runs validation gates until green
+```
+
+### Files & Locations
+
+| Path | Purpose |
+|------|---------|
+| [`INITIAL.md`](INITIAL.md) | Feature request — overwritten or copied per feature |
+| [`.claude/commands/generate-prp.md`](.claude/commands/generate-prp.md) | Slash command that produces a PRP from `INITIAL.md` |
+| [`.claude/commands/execute-prp.md`](.claude/commands/execute-prp.md) | Slash command that implements a PRP |
+| [`PRPs/templates/prp_base.md`](PRPs/templates/prp_base.md) | Template the agent fills in |
+| `PRPs/{feature}.md` | Generated blueprint per feature (committed) |
+| [`config/api_configs.example.json`](config/api_configs.example.json) | Per-API config template |
+
+> Reference code patterns live in `src/events/` directly — no separate `examples/` folder.
+> See "Reference Implementation" below.
+
+### Validation Gates (run during `/execute-prp`)
+
+```bash
+ruff check src/ tests/ --fix
+ruff format src/ tests/
+mypy src/ tests/
+pytest tests/ -v          # must include the 27 existing events tests
+```
+
+### When to Use
+
+- ✅ New module or phase (Phase 2 server, Phase 3 auth, Phase 4 gateway, Phase 5 tools)
+- ✅ Cross-cutting changes (e.g. adding a new error code across all tools)
+- ❌ Small bug fixes or single-line changes — just edit directly
+- ❌ Exploratory spikes where requirements aren't yet clear
+
+### Reference Implementation
+
+`src/events/` is the gold standard. Every PRP should cite it as the pattern source for:
+- Async + queue-based design ([writers.py](src/events/writers.py))
+- Pydantic v2 schemas ([schemas.py](src/events/schemas.py))
+- Public-class API with `from_env()` ([recorder.py](src/events/recorder.py))
+- Sensitive-data redaction ([redaction.py](src/events/redaction.py)) — **always reuse**
+- Test layout with pytest-asyncio auto mode ([tests/events/](tests/events/))
 
 ## When Adding a New API
 

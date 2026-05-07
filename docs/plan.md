@@ -1,5 +1,10 @@
 # MCP Data Gateway — Implementation Plan
 
+> **Workflow.** This file is the high-level roadmap (what to build, in what order). For
+> the implementation workflow itself — Context Engineering with `/generate-prp` and
+> `/execute-prp` — see [`CLAUDE.md` § Context Engineering Workflow](../CLAUDE.md). New
+> features for Phases 2–6 start by writing a delta in [`INITIAL.md`](../INITIAL.md).
+
 ## Context
 Building a Python-based **Model Context Protocol (MCP) server** that acts as a data gateway, enabling Claude to send/receive data from various external APIs via a unified interface. The system features OAuth 2.0 authentication and supports generic REST/GraphQL API integration, with a foundation for future evolution into a standalone MCP App.
 
@@ -138,12 +143,9 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 - `tests/auth/`, `tests/gateway/`, `tests/tools/` — integration tests for remaining phases
 
 ## Technology Stack
-- **Python 3.10+**
-- **mcp** — Model Context Protocol Python SDK
-- **httpx** — Async HTTP client (REST + GraphQL)
-- **keyring** — Secure credential storage
-- **pydantic** — Data validation
-- **python-dotenv** — Configuration management
+
+See [`README.md` § Tech Stack](../README.md). Source of truth for runtime versions:
+[`requirements.txt`](../requirements.txt).
 
 ## Verification Plan
 1. **Unit tests** per module (auth, gateway, handlers, tools)
