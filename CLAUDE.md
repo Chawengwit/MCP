@@ -6,26 +6,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-The project is in **early development**. The plan is approved but no source code has been written yet — only `README.md` and this `CLAUDE.md`.
+The project is in **early development**. The activity logging subsystem (`src/events/`) is implemented and tested (27 passing unit tests). Phases 2–5 (server, auth, gateway, tools) are not yet implemented.
 
 ## Architecture
 
+Items marked **(planned)** don't exist yet. Everything else is implemented.
+
 ```
 src/
-├── server.py              # MCP server entry point (uses python `mcp` SDK)
-├── auth/
-│   ├── oauth.py           # OAuth 2.0 flow + automatic browser popup + local callback server
-│   └── credentials.py     # Token storage via system keyring
-├── gateway/
-│   ├── api_client.py      # Generic async HTTP client (REST + GraphQL)
-│   └── handlers.py        # Request/response normalization, GraphQL error parsing
-├── models/
-│   └── data_models.py     # Pydantic models for generic data shapes
-└── tools/
-    └── mcp_tools.py       # MCP tool definitions: fetch_data, send_data, execute_graphql, list_apis, get_status
+├── server.py              # MCP server entry point (planned)
+├── auth/                  # OAuth 2.0 + keyring (planned)
+│   ├── oauth.py
+│   └── credentials.py
+├── gateway/               # REST/GraphQL client (planned)
+│   ├── api_client.py
+│   └── handlers.py
+├── models/                # Generic Pydantic data models (planned)
+│   └── data_models.py
+├── tools/                 # MCP tool definitions (planned)
+│   └── mcp_tools.py
+└── events/                # Activity logging — implemented ✓
+    ├── schemas.py         # Pydantic models per category
+    ├── redaction.py       # Header/body/URL redaction helpers
+    ├── retention.py       # Cleanup of files older than retention
+    ├── writers.py         # Async JSONL writer + queue + rotation
+    └── recorder.py        # Public Recorder API
 
 config/
-└── api_configs.json       # Per-API configuration (URL, auth method, endpoints)
+└── api_configs.json       # Per-API configuration (planned)
+
+tests/
+└── events/                # 27 passing tests for src/events/
 ```
 
 ### Key Design Decisions
@@ -100,7 +111,7 @@ Before logging any request/response, redact:
 - `access_token`, `refresh_token`, `client_secret` fields in JSON bodies
 - Query string parameters named `api_key`, `token`, `secret`, `password`
 
-A central redaction helper lives in `src/gateway/handlers.py` — always route logs through it.
+The central redaction helpers live in [`src/events/redaction.py`](src/events/redaction.py) (`redact_headers`, `redact_body`, `redact_url`) — always route logs through them. The future `src/gateway/handlers.py` should reuse these helpers, not reimplement them.
 
 ### Debug Mode
 - `MCP_DEBUG=true` → enables verbose request tracing, dumps full (redacted) HTTP exchanges. **Default: `false`.**
@@ -199,35 +210,115 @@ For paginated APIs, always surface pagination tokens/cursors in `metadata` so Cl
   ```
 - Do NOT collapse partial-success into a flat error — Claude can use the partial data.
 
-## Common Commands (once implemented)
+## Common Commands
 
 ```bash
-# Install dependencies
+# Install runtime dependencies
 pip install -r requirements.txt
 
-# Run the MCP server
-python -m src.server
+# Install dev/test dependencies (adds pytest, pytest-asyncio)
+pip install -r requirements-dev.txt
 
-# Run tests
+# Run all tests (27 currently, all in tests/events/)
 pytest tests/
 
-# Run linter
-ruff check src/
+# Run a single test file with verbose output
+pytest tests/events/test_writers.py -v
 
-# Format code
-ruff format src/
+# Run a single test by name
+pytest tests/events/test_writers.py::test_writer_drains_on_stop
+
+# Run the MCP server (planned — Phase 2 not yet implemented)
+python -m src.server
 ```
+
+## Activity Logging (`src/events/`)
+
+The gateway records every tool invocation across **four separate categories** to JSONL files. These logs are operator-only — **no MCP tool exposes them to Claude**.
+
+### Categories
+
+| Category | Path | Purpose |
+|----------|------|---------|
+| `audit` | `logs/audit/YYYY-MM.jsonl` | Who/when/what — security & compliance |
+| `debug` | `logs/debug/YYYY-MM.jsonl` | Full HTTP exchange (redacted) for troubleshooting |
+| `usage` | `logs/usage/YYYY-MM.jsonl` | Per-call metrics (latency, sizes) — analytics |
+| `insight` | `logs/insight/YYYY-MM.jsonl` | Tool args + response summaries — Claude's request patterns |
+
+### File Layout
+- One JSONL file per **category per month** (`YYYY-MM.jsonl`).
+- Append-only; one event per line.
+- File created lazily on first event of the month.
+- Retention: 1 year (configurable via `MCP_LOG_RETENTION_DAYS`). Cleanup runs when a new monthly file is created. The current month is never deleted.
+
+### Public API
+```python
+from src.events import Recorder, ResponseSummary
+
+recorder = Recorder.from_env()
+await recorder.start()  # at server startup
+
+# In each tool implementation:
+await recorder.record_audit(session_id=..., tool="fetch_data", result="success", duration_ms=42)
+await recorder.record_usage(tool="fetch_data", status="success", duration_ms=42)
+await recorder.record_insight(session_id=..., tool="fetch_data", tool_args={...})
+# In gateway/api_client.py:
+await recorder.record_debug(session_id=..., tool="fetch_data", request=..., response=..., duration_ms=42)
+
+await recorder.stop()  # at shutdown — drains queue, closes handles
+```
+
+### Recording Rules
+- All `record_*` methods are **async non-blocking** (enqueue + background writer task).
+- All recording is wrapped in try/except — **never raises** to the tool path. Failures emit a stderr warning.
+- Tools should call `record_audit` + `record_usage` + `record_insight` for every invocation.
+- The gateway calls `record_debug` only when `MCP_LOG_DEBUG_ENABLED=true`.
+
+### Per-API Payload Depth
+`config/api_configs.json` controls how much of each request/response is captured for the **debug** category:
+
+```json
+{
+  "apis": {
+    "example_api": {
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "summary",
+        "redact_fields": ["ssn", "credit_card"]
+      }
+    }
+  }
+}
+```
+
+Modes: `metadata` (headers + size only), `summary` (metadata + first/last 200 bytes + top keys), `full` (after redaction). Default: `metadata`.
+
+### Redaction
+The redaction helpers in `src/events/redaction.py` always strip:
+- Headers: `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`, `Proxy-Authorization`
+- Body keys: `password`, `token`, `access_token`, `refresh_token`, `client_secret`, `api_key`, `secret`, plus per-API `redact_fields`
+- URL query params: `api_key`, `token`, `secret`, `password`
+
+Replacement: the literal string `<redacted>` (preserves the field name and JSON shape).
+
+### Things to Watch For
+- **UTC everywhere**: timestamps and filename months use UTC to avoid month-boundary off-by-ones.
+- **Writer is single-task**: don't instantiate multiple `JsonlWriter` instances pointing at the same `log_dir` in one process — file corruption.
+- **Queue overflow drops the new event**: when `queue_max_size` is exceeded, `submit()` catches `QueueFull` and drops the *incoming* event (with stderr warning). The queue is FIFO and existing events are preserved. Default cap is 10,000 — generous.
+- **Cleanup runs in a thread**: `cleanup_old_logs` uses synchronous `pathlib`, scheduled via `asyncio.to_thread` to keep the event loop responsive.
+- **`Recorder.from_env()` reads env at construction** — changes to `MCP_LOG_*` after start are not picked up.
 
 ## Implementation Phases (Reference)
 
-The committed plan is at [`docs/plan.md`](docs/plan.md). Six phases:
+The committed plan is at [`docs/plan.md`](docs/plan.md). Seven phases:
 
-1. **Project Setup** — structure, dependencies, `.gitignore`
+1. **Project Setup** — structure, dependencies, `.gitignore` (mostly done)
 2. **Core MCP Server** — server bootstrap, tool registration
 3. **Authentication** — OAuth flow, keyring storage, token refresh
 4. **API Gateway** — generic REST + GraphQL client
 5. **Tools & Integration** — implement each MCP tool
 6. **Testing & Documentation** — unit/integration tests, examples
+7. **Activity Logging** (`src/events/`) — **implemented ✓**
 
 ## When Adding a New API
 

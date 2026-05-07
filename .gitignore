@@ -41,9 +41,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs (activity log JSONL files + general logs)
 *.log
 logs/
+!docs/logs/  # placeholder if docs ever needs a logs subdirectory
 
 # Local Claude Code workspace state (keep CLAUDE.md committed)
 .claude/local/

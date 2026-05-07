@@ -69,7 +69,7 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 
 ## Implementation Strategy
 
-### Phase 1: Project Setup
+### Phase 1: Project Setup ✓ (mostly complete)
 1. Initialize Python project structure
 2. Create `requirements.txt` with dependencies:
    - `mcp` (Model Context Protocol SDK)
@@ -78,9 +78,12 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
    - `python-dotenv` (environment variables)
    - `pydantic` (data validation)
    - Note: `webbrowser` is in Python's standard library — do not list as a pip dependency
-3. Set up `.gitignore` for sensitive files (`.env`, credentials, caches)
-4. Create `.env.example` documenting all environment variables
-5. Basic `README.md` with architecture overview
+3. Create `requirements-dev.txt` for `pytest` and `pytest-asyncio`
+4. Create `pyproject.toml` for pytest configuration (`asyncio_mode = "auto"`)
+5. Set up `.gitignore` for sensitive files (`.env`, credentials, caches, `logs/`)
+6. Create `.env.example` documenting all environment variables
+7. Basic `README.md` with architecture overview
+8. _Remaining_: initial `config/api_configs.json` template
 
 ### Phase 2: Core MCP Server
 1. Implement basic MCP server initialization
@@ -112,16 +115,27 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 3. Sample `config/api_configs.json` examples
 4. Setup/usage documentation
 
+### Phase 7: Activity Logging (`src/events/`)
+1. Pydantic schemas for four event categories: `audit`, `debug`, `usage`, `insight`
+2. Centralized redaction helper (headers, body keys, URL query params)
+3. Async JSONL writer with buffered queue and per-month file rotation
+4. Retention cleanup (delete files older than `MCP_LOG_RETENTION_DAYS`, never the current month)
+5. Public `Recorder` API integrated by tools, gateway, and auth modules
+6. Per-API payload depth controls in `config/api_configs.json` (`metadata`/`summary`/`full`)
+7. Logs are operator-only — **not** exposed via any MCP tool
+
 ## Critical Files to Create
 - `src/server.py` — MCP server entry point
 - `src/auth/oauth.py` — OAuth implementation
 - `src/auth/credentials.py` — Keyring-backed credential store
 - `src/gateway/api_client.py` — Generic REST/GraphQL client
-- `src/gateway/handlers.py` — Response normalization + redaction helper
+- `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`)
 - `src/models/data_models.py` — Pydantic models for responses
-- `src/tools/mcp_tools.py` — MCP tool definitions
+- `src/tools/mcp_tools.py` — MCP tool definitions (must call `Recorder.record_*`)
+- `src/events/` — Activity logging (schemas, writers, retention, recorder) ✓ **implemented**
 - `config/api_configs.json` — API configuration template
-- `tests/` — Unit and integration tests
+- `tests/events/` — 27 passing unit tests for `src/events/` ✓ **implemented**
+- `tests/auth/`, `tests/gateway/`, `tests/tools/` — integration tests for remaining phases
 
 ## Technology Stack
 - **Python 3.10+**

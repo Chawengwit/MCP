@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Early Development.** Project scaffolding (config, dependencies, docs) is in place. Source code under `src/` has not yet been implemented — see the [Development Roadmap](#development-roadmap) for current progress. The implementation plan is at [`docs/plan.md`](docs/plan.md).
+> **Status: Early Development.** Activity logging (`src/events/`) is implemented and tested. Core MCP server, auth, gateway, and tools (Phases 2–5) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -27,30 +27,40 @@ This MCP server provides:
 
 ## Architecture
 
+Files marked **(planned)** are not yet implemented. Files without that marker exist today.
+
 ```
 MCP/
 ├── src/
-│   ├── server.py              # MCP server entry point
-│   ├── auth/
-│   │   ├── __init__.py
-│   │   ├── oauth.py           # OAuth 2.0 flow handler with popup
-│   │   └── credentials.py     # Secure credential storage (keyring)
-│   ├── gateway/
-│   │   ├── __init__.py
-│   │   ├── api_client.py      # Generic REST/GraphQL HTTP client
-│   │   └── handlers.py        # Request/response transformation
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── data_models.py     # Generic Pydantic data models
-│   └── tools/
-│       ├── __init__.py
-│       └── mcp_tools.py       # MCP tool definitions for Claude
+│   ├── server.py              # MCP server entry point (planned)
+│   ├── auth/                  # OAuth 2.0 + keyring (planned)
+│   │   ├── oauth.py
+│   │   └── credentials.py
+│   ├── gateway/               # REST/GraphQL HTTP client (planned)
+│   │   ├── api_client.py
+│   │   └── handlers.py
+│   ├── models/                # Pydantic data models (planned)
+│   │   └── data_models.py
+│   ├── tools/                 # MCP tool definitions (planned)
+│   │   └── mcp_tools.py
+│   └── events/                # Activity logging (implemented ✓)
+│       ├── schemas.py         # Pydantic models (audit/debug/usage/insight)
+│       ├── redaction.py       # Sensitive data redaction
+│       ├── retention.py       # Per-month file rotation cleanup
+│       ├── writers.py         # Async JSONL writer + queue
+│       └── recorder.py        # Public Recorder API
 ├── config/
-│   └── api_configs.json       # API service configurations
-├── tests/                     # Unit and integration tests
+│   └── api_configs.json       # API service configurations (planned)
+├── docs/
+│   └── plan.md                # Implementation plan
+├── tests/
+│   └── events/                # Unit tests for src/events/ (27 tests, all passing)
 ├── .env.example               # Environment variables template
 ├── .gitignore                 # Excludes secrets and build artifacts
-├── requirements.txt           # Python dependencies
+├── pyproject.toml             # pytest configuration
+├── requirements.txt           # Runtime dependencies
+├── requirements-dev.txt       # Dev/test dependencies (adds pytest)
+├── CLAUDE.md                  # Claude Code guidance
 └── README.md                  # This file
 ```
 
@@ -77,6 +87,18 @@ MCP/
 | `execute_graphql` | Run a GraphQL query or mutation (auto-OAuth if required) |
 | `list_apis` | List all configured API services |
 | `get_status` | Show authentication and connection status |
+
+#### Activity Logging (`src/events/`)
+Records every tool invocation across four categories to JSONL files (one file per category per month). **Operator-only — not exposed to Claude as an MCP tool.**
+
+| Category | Path | Purpose |
+|----------|------|---------|
+| `audit` | `logs/audit/YYYY-MM.jsonl` | Who/when/what — security & compliance |
+| `debug` | `logs/debug/YYYY-MM.jsonl` | Full HTTP exchange (redacted) |
+| `usage` | `logs/usage/YYYY-MM.jsonl` | Per-call metrics (latency, sizes) |
+| `insight` | `logs/insight/YYYY-MM.jsonl` | Tool args + response summaries |
+
+Retention: 1 year (configurable). Writers are async non-blocking; failures emit stderr warnings but never break tool calls. See [CLAUDE.md](CLAUDE.md#activity-logging-srcevents) for the full contract.
 
 ## Authentication Flow
 
@@ -123,11 +145,14 @@ When Claude calls a tool that requires authentication:
 cd /Users/chawengwit/Documents/MCP
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies
+# Install runtime dependencies
 pip install -r requirements.txt
+
+# (Optional) Install dev/test dependencies for running pytest
+pip install -r requirements-dev.txt
 
 # Copy environment template
 cp .env.example .env
@@ -149,7 +174,19 @@ MCP_LOG_FILE=                   # Optional path to log file (default: stderr onl
 MCP_DEBUG=false                 # Enable verbose request tracing
 MCP_MAX_RESPONSE_BYTES=1048576  # Response size cap (1 MB default)
 OAUTH_CALLBACK_PORT=8765
+
+# Activity logging (operator-only)
+MCP_LOG_DIR=./logs
+MCP_LOG_RETENTION_DAYS=365
+MCP_LOG_AUDIT_ENABLED=true
+MCP_LOG_DEBUG_ENABLED=true
+MCP_LOG_USAGE_ENABLED=true
+MCP_LOG_INSIGHT_ENABLED=true
+MCP_LOG_FLUSH_INTERVAL_SEC=5
+MCP_LOG_BUFFER_SIZE=100
 ```
+
+See [`.env.example`](.env.example) for the full annotated template.
 
 #### 2. API Configurations (`config/api_configs.json`)
 ```json
@@ -176,11 +213,24 @@ OAUTH_CALLBACK_PORT=8765
 
 ## Usage
 
-### Running the MCP Server
+### Running Tests
+
+```bash
+# After installing requirements-dev.txt:
+pytest tests/
+
+# Run a specific test file with verbose output
+pytest tests/events/test_writers.py -v
+
+# Currently 27 tests for src/events/ — all passing.
+```
+
+### Running the MCP Server (planned)
 
 ```bash
 python -m src.server
 ```
+> Phase 2 — `src/server.py` is not yet implemented.
 
 ### Connecting to Claude Code
 
@@ -262,9 +312,11 @@ See [CLAUDE.md](CLAUDE.md#debug--logging-strategy) for full debugging strategy.
 
 ### Phase 1: Project Setup
 - [x] `requirements.txt` with pinned dependencies
-- [x] `.gitignore` for secrets and caches
+- [x] `requirements-dev.txt` for pytest and pytest-asyncio
+- [x] `.gitignore` for secrets, caches, and `logs/`
 - [x] `.env.example` documenting environment variables
-- [ ] Initialize `src/` package structure
+- [x] `pyproject.toml` for pytest configuration
+- [x] Initialize `src/` package structure (`src/__init__.py`)
 - [ ] Initial `config/api_configs.json` template
 
 ### Phase 2: Core MCP Server
@@ -295,6 +347,15 @@ See [CLAUDE.md](CLAUDE.md#debug--logging-strategy) for full debugging strategy.
 - [ ] Integration tests with mock APIs
 - [ ] Configuration examples
 - [ ] User documentation
+
+### Phase 7: Activity Logging (`src/events/`) ✓
+- [x] Pydantic schemas for `audit`, `debug`, `usage`, `insight`
+- [x] Centralized redaction helper (headers, body keys, URL query params)
+- [x] Async JSONL writer with buffered queue and per-month rotation
+- [x] Retention cleanup (1 year, never deletes current month)
+- [x] Public `Recorder` API (`Recorder.from_env()`, `record_audit/debug/usage/insight`)
+- [x] Unit tests (27 passing)
+- [ ] Wire `Recorder` into `src/tools/` and `src/gateway/` once those exist
 
 ## Future Enhancements
 
