@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import signal
 import sys
 import time
@@ -234,7 +235,9 @@ async def main() -> None:
     """Main entry point for the MCP server."""
     _log("MCP Data Gateway starting...")
 
-    config_path = Path("config/api_configs.json")
+    # MCP_API_CONFIG_PATH overrides the default for test isolation and for
+    # operators who keep config under XDG_CONFIG_HOME or similar.
+    config_path = Path(os.getenv("MCP_API_CONFIG_PATH", "config/api_configs.json"))
     try:
         api_configs = load_api_configs(config_path)
     except Exception as e:

@@ -46,6 +46,7 @@ Thumbs.db
 logs/
 !docs/logs/  # placeholder if docs ever needs a logs subdirectory
 
-# Local Claude Code workspace state (keep CLAUDE.md committed)
+# Local Claude Code workspace state (keep CLAUDE.md and .claude/commands/ committed)
 .claude/local/
 .claude/worktrees/
+.claude/settings.local.json

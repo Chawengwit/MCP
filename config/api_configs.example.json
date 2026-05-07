@@ -1,5 +1,5 @@
 {
-  "_comment": "Template for config/api_configs.json. Copy this file to api_configs.json and fill in real values. NEVER commit secrets — use ${ENV_VAR} placeholders and put actual values in .env.",
+  "_comment": "Template for config/api_configs.json. Copy this file to api_configs.json and fill in real values. NEVER commit secrets — use ${ENV_VAR} placeholders and put actual values in .env. Supported auth.type values: 'oauth2' (full PKCE flow + keyring storage), 'bearer' (token from token_env), 'api_key' (key from key_env, sent in header_name), or auth=null for public APIs. The redact_fields list is per-API and is ADDITIVE on top of the global redaction list (Authorization header, access_token, password, api_key, etc. are always redacted). See README troubleshooting for first-run guidance.",
   "apis": {
     "example_rest_api": {
       "type": "rest",
@@ -84,6 +84,33 @@
       "limits": {
         "timeout_seconds": 15,
         "max_retries": 1
+      }
+    },
+
+    "public_no_auth_api": {
+      "_comment": "Demonstrates auth=null for public REST endpoints. fetch_data sends no Authorization header; get_status reports auth_state='not_required'.",
+      "type": "rest",
+      "base_url": "https://api.publicapis.example.com",
+      "auth": null,
+      "endpoints": {
+        "list_categories": {
+          "method": "GET",
+          "path": "/categories"
+        },
+        "get_entry": {
+          "method": "GET",
+          "path": "/entries",
+          "query_params": ["category", "limit"]
+        }
+      },
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "summary",
+        "redact_fields": []
+      },
+      "limits": {
+        "timeout_seconds": 15,
+        "max_retries": 2
       }
     }
   }

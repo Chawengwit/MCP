@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-The project is in **early development**. The activity logging subsystem (`src/events/`), the core MCP server (`src/server.py`), the config loader (`src/config.py`), the authentication subsystem (`src/auth/`), the API gateway (`src/gateway/`), and the full MCP tool surface (`src/tools/`: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`) are implemented and tested (222 passing unit tests). Phase 6 (end-to-end integration tests + docs polish) is the only remaining work.
+All seven planned phases are implemented and tested (232 passing unit + integration tests):
+
+- **Phase 1** — project setup
+- **Phase 2** — core MCP server (`src/server.py`), config loader (`src/config.py`), tool registry (`src/tools/`)
+- **Phase 3** — authentication subsystem (`src/auth/`): OAuth 2.0 + PKCE + keyring credentials
+- **Phase 4** — API gateway (`src/gateway/`): `RestClient` + `GraphQLClient` + response normalization
+- **Phase 5** — full MCP tool surface (`src/tools/`: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`)
+- **Phase 6** — integration tests (subprocess smoke test + full-flow), example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging
+- **Phase 7** — activity logging subsystem (`src/events/`)
+
+The codebase is feature-complete relative to the plan. Future work (out of scope) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Architecture
 
@@ -19,11 +29,11 @@ What this file pins:
 - **`src/events/`** is the project's reference implementation (Phase 7, complete). All
   new code mirrors its conventions. See "Reference Implementation" section below.
 - **`src/server.py`, `src/config.py` (Phase 2)**, **`src/auth/` (Phase 3)**,
-  **`src/gateway/` (Phase 4)**, and **`src/tools/` (Phase 5 — `fetch_data`/`send_data`/
-  `execute_graphql`/`get_status` plus the existing `list_apis`)** are also complete and
-  follow the `src/events/` patterns.
-- The end-to-end integration tests + docs polish (Phase 6) is still planned — see
-  roadmap in `docs/plan.md`.
+  **`src/gateway/` (Phase 4)**, **`src/tools/` (Phase 5 — `fetch_data`/`send_data`/
+  `execute_graphql`/`get_status` plus the existing `list_apis`)**, and **the integration
+  tests + docs polish (Phase 6)** are also complete and follow the `src/events/` patterns.
+- The roadmap in `docs/plan.md` is closed. Open new features by writing a delta in
+  `INITIAL.md` and running `/generate-prp`.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.

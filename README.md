@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), authentication (`src/auth/`), the API gateway (`src/gateway/`), and all five MCP tools (`src/tools/`) are implemented and tested (222 passing tests). The end-to-end integration tests + documentation polish (Phase 6) are still outstanding — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
+> **Status: Feature-complete (v0).** All seven planned phases are implemented and tested — the core MCP server, OAuth + keyring authentication, REST/GraphQL gateway, all five MCP tools, integration tests, and the activity-logging subsystem. **232 passing tests**. See the [Development Roadmap](#development-roadmap) for what each phase delivered, or [`docs/plan.md`](docs/plan.md) for the per-phase breakdown.
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -62,10 +62,12 @@ MCP/
 ├── tests/
 │   ├── auth/                  # Unit tests for src/auth/ (49 cases — implemented ✓)
 │   ├── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
-│   ├── gateway/               # Unit tests for src/gateway/ (50 cases — implemented ✓)
-│   ├── tools/                 # Unit + integration tests for src/tools/ (35 cases — implemented ✓)
+│   ├── gateway/               # Unit tests for src/gateway/ (61 cases — implemented ✓)
+│   ├── tools/                 # Unit tests for src/tools/ (37 cases — implemented ✓)
+│   ├── integration/           # Full-flow + subprocess smoke tests (5 cases — implemented ✓)
 │   ├── test_config.py         # Config loader tests
-│   └── test_server.py         # Server bootstrap + _build_oauth_configs tests
+│   ├── test_server.py         # Server bootstrap + _build_oauth_configs tests
+│   └── test_example_config.py # Schema-drift guard for api_configs.example.json
 ├── .claude/commands/          # Slash commands for the dev workflow
 │   ├── generate-prp.md        #   /generate-prp INITIAL.md  → PRPs/{feature}.md
 │   └── execute-prp.md         #   /execute-prp PRPs/{...}   → implements + validates
@@ -128,84 +130,73 @@ When Claude calls a tool that requires authentication:
 - **pydantic** — Data validation and modeling
 - **python-dotenv** — Environment variable management
 
-## Setup
+## Quickstart
 
-### Prerequisites
-- Python 3.10 or higher
-- pip or uv (recommended)
-
-### Installation
+Prerequisites: Python 3.10+ and `pip` (or `uv`).
 
 ```bash
-# Clone the repository
-cd /Users/chawengwit/Documents/MCP
+# 1. Clone and enter the repo
+git clone https://github.com/Chawengwit/MCP.git mcp-data-gateway
+cd mcp-data-gateway
 
-# Create virtual environment
+# 2. Create a virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-# Install runtime dependencies
+# 3. Install runtime + dev dependencies
 pip install -r requirements.txt
+pip install -r requirements-dev.txt # only if you want to run pytest
 
-# (Optional) Install dev/test dependencies for running pytest
-pip install -r requirements-dev.txt
+# 4. Copy the env + config templates and edit them
+cp .env.example .env                       # add provider client_id / secrets
+cp config/api_configs.example.json config/api_configs.json
 
-# Copy environment template
-cp .env.example .env
-# Edit .env with your OAuth credentials and API settings
+# 5. Run the server (talks MCP over stdio)
+python -m src.server
 ```
 
-### Configuration
+The server boots, loads `config/api_configs.json`, starts the Recorder, builds the
+`ToolContext`, and registers all five tools (`list_apis`, `fetch_data`, `send_data`,
+`execute_graphql`, `get_status`). On SIGINT/SIGTERM the Recorder queue drains and
+the server exits cleanly.
 
-#### 1. Environment Variables (`.env`)
-```bash
-# OAuth credentials (per provider)
-OAUTH_CLIENT_ID=your_client_id
-OAUTH_CLIENT_SECRET=your_client_secret
-OAUTH_REDIRECT_URI=http://127.0.0.1:8765/callback  # NOT localhost — see Security section
+> **First-run note.** With the default example config the server will warn
+> *"Skipping OAuth config for example_rest_api: missing client_id, client_secret"*
+> until you populate `EXAMPLE_REST_CLIENT_ID` and `EXAMPLE_REST_CLIENT_SECRET` in
+> `.env`. The other tools (`list_apis`, `get_status`, plus any `bearer` /
+> `api_key` / no-auth APIs) work without OAuth setup.
 
-# Server settings
-MCP_LOG_LEVEL=INFO              # DEBUG | INFO | WARN | ERROR
-MCP_LOG_FILE=                   # Optional path to log file (default: stderr only)
-MCP_DEBUG=false                 # Enable verbose request tracing
-MCP_MAX_RESPONSE_BYTES=1048576  # Response size cap (1 MB default)
-OAUTH_CALLBACK_PORT=8765
+## Configuring an API
 
-# Activity logging (operator-only)
-MCP_LOG_DIR=./logs
-MCP_LOG_RETENTION_DAYS=365
-MCP_LOG_AUDIT_ENABLED=true
-MCP_LOG_DEBUG_ENABLED=true
-MCP_LOG_USAGE_ENABLED=true
-MCP_LOG_INSIGHT_ENABLED=true
-MCP_LOG_FLUSH_INTERVAL_SEC=5
-MCP_LOG_BUFFER_SIZE=100
-```
+The shipped [`config/api_configs.example.json`](config/api_configs.example.json)
+covers all four `auth.type` paths:
 
-See [`.env.example`](.env.example) for the full annotated template.
+| Example entry | `auth.type` | Use when |
+|---|---|---|
+| `example_rest_api` | `oauth2` | Provider supports OAuth 2.0 auth-code flow (Google, GitHub, custom) |
+| `example_graphql_api` | `bearer` | You already have a long-lived token in an env var |
+| `example_apikey_api` | `api_key` | Provider uses a static key in a custom header |
+| `public_no_auth_api` | `null` | Public endpoints with no auth |
 
-#### 2. API Configurations (`config/api_configs.json`)
-```json
-{
-  "apis": {
-    "example_api": {
-      "base_url": "https://api.example.com",
-      "type": "rest",
-      "auth": {
-        "method": "oauth2",
-        "provider": "custom",
-        "authorize_url": "https://auth.example.com/oauth/authorize",
-        "token_url": "https://auth.example.com/oauth/token",
-        "scopes": ["read", "write"]
-      },
-      "endpoints": {
-        "get_users": {"method": "GET", "path": "/users"},
-        "create_user": {"method": "POST", "path": "/users"}
-      }
-    }
-  }
-}
-```
+**Never commit literal secrets** — every credential field in the file uses a
+`${ENV_VAR}` placeholder. The config loader substitutes from your `.env` (or the
+process environment) at startup.
+
+### Environment variables
+
+See [`.env.example`](.env.example) for the full annotated template. Most-used
+variables:
+
+| Var | Default | What it does |
+|---|---|---|
+| `MCP_API_CONFIG_PATH` | `config/api_configs.json` | Override the API config file path (useful for XDG_CONFIG_HOME, per-environment configs, or CI isolation) |
+| `OAUTH_CALLBACK_PORT` | `8765` | Port the OAuth callback HTTP server binds to |
+| `MCP_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARN` / `ERROR` |
+| `MCP_LOG_DIR` | `./logs` | Where activity-log JSONL files go |
+| `MCP_LOG_RETENTION_DAYS` | `365` | Older monthly files are pruned at startup |
+| `MCP_LOG_DEBUG_ENABLED` | `true` | Toggles per-request HTTP debug events |
+| `MCP_MAX_RESPONSE_BYTES` | `10485760` (10 MiB) | Response-size cap before truncation / `RESPONSE_TOO_LARGE` |
+| `MCP_REQUEST_TIMEOUT_SEC` | `30` | Per-request timeout for outbound HTTP |
 
 ## Usage
 
@@ -218,7 +209,7 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 222 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, src/config.py, src/server.py.
+# Currently 232 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, plus integration + example-config drift tests.
 ```
 
 ### Running the MCP Server
@@ -242,11 +233,18 @@ Add this configuration to your Claude Code MCP settings:
     "data-gateway": {
       "command": "python",
       "args": ["-m", "src.server"],
-      "cwd": "/Users/chawengwit/Documents/MCP"
+      "cwd": "/path/to/mcp-data-gateway"
     }
   }
 }
 ```
+
+Replace `/path/to/mcp-data-gateway` with the absolute path of your checkout. If
+you installed the project in a virtualenv, point `command` at that venv's
+Python instead of the system `python`:
+
+- macOS / Linux: `/path/to/mcp-data-gateway/.venv/bin/python`
+- Windows: `C:\path\to\mcp-data-gateway\.venv\Scripts\python.exe`
 
 ### Example Interactions
 
@@ -269,19 +267,96 @@ For the full spec — exact field shapes, the error-code table, the truncation r
 the GraphQL handling — see
 [`CLAUDE.md` § Response Format Conventions](CLAUDE.md).
 
-## Debugging
+## OAuth Setup
 
-To enable verbose tracing:
+For each `oauth2` API in `api_configs.json`:
 
-```bash
-MCP_DEBUG=true MCP_LOG_LEVEL=DEBUG python -m src.server
+1. **Register an OAuth application** with the provider (GitHub OAuth Apps,
+   Google Cloud OAuth client, etc.) and set the **redirect URI** to
+   `http://127.0.0.1:8765/callback` exactly. Use `127.0.0.1`, not `localhost` —
+   browsers may treat them as different origins for OAuth state tracking.
+2. Copy the resulting **client ID** and **client secret** into `.env` under
+   names matching your `api_configs.json` placeholders (e.g.
+   `EXAMPLE_REST_CLIENT_ID` / `EXAMPLE_REST_CLIENT_SECRET`).
+3. The first time Claude calls a tool that needs auth, the server opens your
+   browser at the provider's authorize URL, captures the auth code via the
+   one-shot localhost callback server, exchanges it for tokens, and stores them
+   in your OS keyring. Subsequent runs reuse the stored token; the gateway
+   auto-refreshes when ≤ 5 minutes remain.
+
+If the default port `8765` is in use on your machine, set
+`OAUTH_CALLBACK_PORT=<free-port>` in `.env` *and* update the redirect URI you
+registered with the provider.
+
+## Keyring Setup (per OS)
+
+Tokens are stored in the OS-native secure keyring. No additional setup is
+needed on most desktops:
+
+| OS | Backend | Action required |
+|---|---|---|
+| **macOS** | Keychain | None — works out of the box |
+| **Windows** | Credential Manager | None — works out of the box |
+| **Linux (desktop)** | Secret Service (gnome-keyring / KWallet) | Ensure your session has one running (most distros do) |
+| **Linux (headless / CI / Docker)** | None by default | `pip install keyrings.alt` for a file backend, OR provide tokens via `bearer` auth (`token_env`) and skip OAuth |
+
+If keyring is unavailable, `Credentials` raises
+`CredentialStorageError("No keyring backend available. Install 'keyrings.alt' …")`
+on the first OAuth API call. The error is fail-loud by design — the gateway
+will not silently fall back to a less secure store.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Server logs *"Skipping OAuth config for X: missing client_id, client_secret"* | `.env` placeholders not set | Populate the matching `${VAR}` in `.env`, restart |
+| OAuth tool hangs after the browser popup | `OAUTH_CALLBACK_PORT` blocked or in use | Free the port or set a different one in `.env`; update the provider's redirect URI to match |
+| OAuth callback returns 400 with *"State parameter mismatch"* | Browser opened a stale tab from a previous flow | Close all browser tabs pointing at `127.0.0.1:8765`, retry |
+| `CredentialStorageError: No keyring backend available` | Headless Linux without DBus / Secret Service | `pip install keyrings.alt`, OR use bearer-token auth |
+| Tool returns `RESPONSE_TOO_LARGE` on a binary download | Hit `MCP_MAX_RESPONSE_BYTES` cap (binary cannot be safely truncated) | Raise the cap, or use the API's pagination, or stream out-of-band |
+| GraphQL response shows both `data` and `errors` | **Intentional** — GraphQL allows partial success; both are surfaced to Claude | Not a bug. See [CLAUDE.md § GraphQL Specifics](CLAUDE.md) |
+| Server smoke test fails with *"Server exited before ready marker"* | A required env var (`MCP_LOG_DIR` etc.) is unset or points to an unwritable path | Check stderr for the actual exception; fix permissions or the var |
+| 401 returned after the tool call worked previously | Refresh token expired or revoked at the provider | Delete the keyring entry (or call `Credentials.clear(api_id)`) and re-auth |
+| Module import error: `ModuleNotFoundError: keyrings.alt` (Linux only) | Tried to use the `keyrings.alt` fallback but didn't install it | `pip install keyrings.alt` |
+
+For the full failure-modes table that this section is derived from, see
+[`CLAUDE.md` § Common Failure Modes](CLAUDE.md).
+
+## Logging (Operator-Only)
+
+The Recorder writes one append-only JSONL file per **(category, month)** under
+`$MCP_LOG_DIR` (default `./logs/`):
+
+```
+logs/
+├── audit/   YYYY-MM.jsonl   who/when/what — security & compliance
+├── debug/   YYYY-MM.jsonl   full HTTP exchange (redacted) — troubleshooting
+├── usage/   YYYY-MM.jsonl   per-call latency / sizes — analytics
+└── insight/ YYYY-MM.jsonl   tool args + response summaries — Claude's request patterns
 ```
 
-All logs go to **stderr** (stdout is reserved for the MCP JSON-RPC protocol). Secrets are
-auto-redacted.
+- Rotation is automatic per month; the **current month is never deleted**.
+- Old files are pruned on server startup according to
+  `MCP_LOG_RETENTION_DAYS` (default 365).
+- All four streams pass through the central redaction helpers
+  (`src/events/redaction.py`); `Authorization` headers, `access_token`,
+  `refresh_token`, `client_secret`, `password`, `api_key`, `secret`, and any
+  per-API `redact_fields` are replaced with `<redacted>`.
 
-For the full debug/logging strategy, env-var reference, and the symptom→cause→fix table,
-see [`CLAUDE.md` § Debug & Logging Strategy](CLAUDE.md).
+> **These logs are operator-only.** No MCP tool exposes them to Claude. Treat
+> the directory like any production audit log: review before sharing, retain
+> per your org's policy, and back up if you need historical analytics.
+
+To enable verbose request tracing temporarily:
+
+```bash
+MCP_LOG_DEBUG_ENABLED=true MCP_LOG_LEVEL=DEBUG python -m src.server
+```
+
+All logs go to **stderr** (stdout is reserved for the MCP JSON-RPC protocol).
+
+For the full debug/logging strategy and env-var reference, see
+[`CLAUDE.md` § Debug & Logging Strategy](CLAUDE.md).
 
 ## Development Workflow
 
@@ -308,9 +383,9 @@ directly.
 | 1 | Project Setup | ✅ done |
 | 2 | Core MCP Server | ✅ done — `list_apis`, registry, config loader, graceful shutdown |
 | 3 | Authentication (OAuth + keyring) | ✅ done — PKCE flow, callback on `127.0.0.1`, `Credentials` with concurrent-refresh lock, 49 tests |
-| 4 | API Gateway (REST + GraphQL) | ✅ done — `RestClient` + `GraphQLClient`, retry on 429/5xx + transport errors, redacted logging, response normalization, GraphQL partial-success preserved, 50 tests |
-| 5 | Tools & Integration | ✅ done — `fetch_data`/`send_data`/`execute_graphql`/`get_status`, `auth.type` branching (oauth2/bearer/api_key/null), Recorder triple per call, secret redaction in insight events, 35 tests |
-| 6 | Testing & Polish | ⏳ pending — end-to-end integration tests, README/docs polish, refined example config |
+| 4 | API Gateway (REST + GraphQL) | ✅ done — `RestClient` + `GraphQLClient`, retry on 429/5xx + transport errors, redacted logging, response normalization, GraphQL partial-success preserved, 61 tests |
+| 5 | Tools & Integration | ✅ done — `fetch_data`/`send_data`/`execute_graphql`/`get_status`, `auth.type` branching (oauth2/bearer/api_key/null), Recorder triple per call, secret redaction in insight events, 37 tests |
+| 6 | Testing & Polish | ✅ done — subprocess smoke test, example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging |
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
@@ -332,4 +407,8 @@ TBD
 
 ## Contributing
 
-This project is in early development. Contribution guidelines will be added once the core implementation is stable.
+The original v0 plan is closed. To propose a new feature, edit `INITIAL.md` with a
+delta description and run `/generate-prp INITIAL.md` — see the
+[Development Workflow](#development-workflow) section. For bug fixes and small
+edits, open a PR directly. Contribution guidelines (style, commit format,
+review process) will be formalized as the project gains contributors.

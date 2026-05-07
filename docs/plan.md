@@ -125,11 +125,13 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 6. ✓ `get_status` uses `Credentials.peek()` exclusively — never refreshes, never opens a browser; tested with `OAuth.start_flow` spy
 7. ✓ `ApiAuthConfig.client_secret` field added to support OAuth refresh; `_build_oauth_configs` skips with warning when required fields are missing instead of silently constructing a broken config
 
-### Phase 6: Testing & Documentation
-1. Unit tests per module
-2. Integration tests with mock APIs
-3. Sample `config/api_configs.json` examples
-4. Setup/usage documentation
+### Phase 6: Testing & Documentation ✓ (complete)
+1. ✓ Unit tests per module — 220 unit tests across `tests/auth/` (49), `tests/events/` (51 collected), `tests/gateway/` (61), `tests/tools/` (37), and the top-level `tests/test_config.py` + `tests/test_server.py` (22 combined), plus 5 integration tests and 7 example-config drift tests for **232 total**
+2. ✓ Integration tests with mock APIs — `tests/integration/test_full_flow.py` (real Recorder + RestClient + Credentials with pre-stored token, secret-omission canary on captured JSONL) + `tests/integration/test_smoke.py` (subprocess server boot/SIGTERM/exit, two secret-leak canaries on stderr and JSONL)
+3. ✓ Refined `config/api_configs.example.json` — three auth-type examples (oauth2, bearer, api_key) + a no-auth example; expanded top-level `_comment` documenting the four `auth.type` paths and `redact_fields` semantics
+4. ✓ Schema-drift guard — `tests/test_example_config.py` validates the example file against `ApiConfigsRoot`, enforces `${VAR}` placeholders for credentials, asserts `localhost` is not used in OAuth callbacks, and refuses literal token prefixes (ghp_, sk-, xoxb-, AKIA, …)
+5. ✓ README expanded — Quickstart (5-step verbatim), Configuring an API, OAuth Setup, Keyring per OS table, Troubleshooting (9 symptom→cause→fix rows), Logging (operator-only)
+6. ✓ `MCP_API_CONFIG_PATH` env var added — operator override for the API config file path; also enables test isolation
 
 ### Phase 7: Activity Logging (`src/events/`)
 1. Pydantic schemas for four event categories: `audit`, `debug`, `usage`, `insight`
@@ -156,10 +158,11 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 - `config/api_configs.json` — API configuration template (gitignored runtime file; example committed at `config/api_configs.example.json`)
 - `tests/events/` — 27 passing unit tests for `src/events/` ✓ **implemented**
 - `tests/auth/` — 49 passing unit tests for `src/auth/` ✓ **implemented**
-- `tests/gateway/` — 50 passing unit tests for `src/gateway/` ✓ **implemented**
-- `tests/tools/` — 35 passing unit + integration tests for `src/tools/` ✓ **implemented**
+- `tests/gateway/` — 61 passing unit tests for `src/gateway/` ✓ **implemented**
+- `tests/tools/` — 37 passing unit tests for `src/tools/` ✓ **implemented**
 - `tests/test_config.py`, `tests/test_server.py` — config + server bootstrap + `_build_oauth_configs` tests ✓ **implemented**
-- `tests/integration/` — additional end-to-end / smoke tests (planned, Phase 6)
+- `tests/test_example_config.py` — 7 schema-drift / placeholder-enforcement tests for `config/api_configs.example.json` ✓ **implemented**
+- `tests/integration/` — full-flow + subprocess smoke tests (5 cases total) ✓ **implemented**
 
 ## Technology Stack
 
