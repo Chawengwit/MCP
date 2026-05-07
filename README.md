@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), and authentication (`src/auth/`) are implemented and tested (124 passing tests). API gateway, tools, and integration tests (Phases 4–6) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
+> **Status: Early Development.** Activity logging (`src/events/`), the core MCP server (`src/server.py`), authentication (`src/auth/`), and the API gateway (`src/gateway/`) are implemented and tested (185 passing tests). The remaining MCP tools and integration tests (Phases 5–6) are not yet implemented — see the [Development Roadmap](#development-roadmap). The implementation plan is at [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -36,9 +36,9 @@ MCP/
 │   ├── auth/                  # OAuth 2.0 + keyring (implemented ✓)
 │   │   ├── oauth.py           # PKCE auth-code flow, callback server bound to 127.0.0.1
 │   │   └── credentials.py     # Keyring-backed store with peek/get/store/clear
-│   ├── gateway/               # REST/GraphQL HTTP client (planned)
-│   │   ├── api_client.py
-│   │   └── handlers.py
+│   ├── gateway/               # REST/GraphQL HTTP client (implemented ✓)
+│   │   ├── api_client.py      # RestClient + GraphQLClient with retry, redacted logging
+│   │   └── handlers.py        # Response normalization, size enforcement, error mapping
 │   ├── models/                # Pydantic data models (planned)
 │   │   └── data_models.py
 │   ├── tools/                 # MCP tool definitions (Phase 2 list_apis ✓; rest planned)
@@ -58,8 +58,9 @@ MCP/
 ├── docs/
 │   └── plan.md                # Implementation plan / roadmap
 ├── tests/
-│   ├── auth/                  # Unit tests for src/auth/ (34 cases — implemented ✓)
+│   ├── auth/                  # Unit tests for src/auth/ (49 cases — implemented ✓)
 │   ├── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
+│   ├── gateway/               # Unit tests for src/gateway/ (50 cases — implemented ✓)
 │   ├── tools/                 # Unit tests for src/tools/ (Phase 2 — implemented ✓)
 │   ├── test_config.py         # Config loader tests
 │   └── test_server.py         # Server bootstrap tests
@@ -215,7 +216,7 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 124 tests passing across src/events/, src/auth/, src/config.py, src/server.py, src/tools/.
+# Currently 185 tests passing across src/events/, src/auth/, src/gateway/, src/config.py, src/server.py, src/tools/.
 ```
 
 ### Running the MCP Server
@@ -305,7 +306,7 @@ directly.
 | 1 | Project Setup | ✅ done |
 | 2 | Core MCP Server | ✅ done — `list_apis`, registry, config loader, graceful shutdown |
 | 3 | Authentication (OAuth + keyring) | ✅ done — PKCE flow, callback on `127.0.0.1`, `Credentials` with concurrent-refresh lock, 49 tests |
-| 4 | API Gateway (REST + GraphQL) | ⏳ pending |
+| 4 | API Gateway (REST + GraphQL) | ✅ done — `RestClient` + `GraphQLClient`, retry on 429/5xx + transport errors, redacted logging, response normalization, GraphQL partial-success preserved, 50 tests |
 | 5 | Tools & Integration | ⏳ pending |
 | 6 | Testing & Polish | ⏳ ongoing |
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |

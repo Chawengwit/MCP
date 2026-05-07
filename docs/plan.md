@@ -106,11 +106,15 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 6. ✓ Read-only `peek()` API for status checks that must not trigger OAuth
 7. ✓ `Field(repr=False)` on secret fields keeps tokens out of `repr()` / log output
 
-### Phase 4: API Gateway
-1. Build generic HTTP client supporting multiple auth methods
-2. Implement request/response handlers with error normalization
-3. Add request validation against API configs
-4. Implement central redaction helper for sensitive data in logs
+### Phase 4: API Gateway ✓ (complete)
+1. ✓ Generic async HTTP client (`src/gateway/api_client.py`) — `RestClient` (GET/POST/PUT/DELETE/PATCH) + `GraphQLClient` ({query, variables, operationName})
+2. ✓ Header precedence: per-request > optional `auth_provider` > defaults
+3. ✓ Retry on HTTP 429 / 502 / 503 / 504 (NOT 500); honors `Retry-After`; exponential backoff capped at 8s
+4. ✓ Retry on transport errors (`ConnectError`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`, `RemoteProtocolError`)
+5. ✓ Response normalization (`src/gateway/handlers.py`) — HTTP status → standard error codes; rate-limit headers → metadata
+6. ✓ GraphQL partial-success preserved: `{data, errors, metadata}` not collapsed to flat error
+7. ✓ Size enforcement via `MCP_MAX_RESPONSE_BYTES`: JSON/text truncates with metadata; binary → `RESPONSE_TOO_LARGE`
+8. ✓ All HTTP traffic logging routes through `src/events/redaction.py` (no Bearer tokens in logs)
 
 ### Phase 5: Tools & Integration
 1. Implement remaining MCP tools (`fetch_data`, `send_data`, `execute_graphql`, `get_status`); `list_apis` already shipped in Phase 2
@@ -141,15 +145,16 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 - `src/auth/oauth.py` — OAuth 2.0 + PKCE flow ✓ **implemented**
 - `src/auth/credentials.py` — Keyring-backed credential store with concurrent-refresh lock ✓ **implemented**
 - `src/events/` — Activity logging (schemas, writers, retention, recorder) ✓ **implemented**
-- `src/gateway/api_client.py` — Generic REST/GraphQL client (planned, Phase 4)
-- `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`) (planned, Phase 4)
+- `src/gateway/api_client.py` — Generic REST/GraphQL client with retry + transport-error retry ✓ **implemented**
+- `src/gateway/handlers.py` — Response normalization (reuses `src/events/redaction.py`) ✓ **implemented**
 - `src/models/data_models.py` — Pydantic models for responses (planned, Phase 5)
 - `src/tools/mcp_tools.py` — `fetch_data`/`send_data`/`execute_graphql`/`get_status` (planned, Phase 5)
 - `config/api_configs.json` — API configuration template (gitignored runtime file; example committed at `config/api_configs.example.json`)
 - `tests/events/` — 27 passing unit tests for `src/events/` ✓ **implemented**
 - `tests/auth/` — 49 passing unit tests for `src/auth/` ✓ **implemented**
+- `tests/gateway/` — 50 passing unit tests for `src/gateway/` ✓ **implemented**
 - `tests/test_config.py`, `tests/test_server.py`, `tests/tools/` — Phase 2 unit tests ✓ **implemented**
-- `tests/gateway/`, `tests/integration/` — integration tests for remaining phases (planned, Phase 4 + 6)
+- `tests/integration/` — end-to-end integration tests (planned, Phase 6)
 
 ## Technology Stack
 
