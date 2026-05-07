@@ -5,11 +5,9 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-
 from src.events.recorder import Recorder, _truthy
 from src.events.schemas import Category, ResponseSummary
 from src.events.writers import JsonlWriter, WriterConfig
-
 
 # ---------------------------------------------------------------------------
 # _truthy helper
@@ -57,7 +55,7 @@ def test_from_env_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
     recorder = Recorder.from_env()
-    config = recorder._writer._config  # type: ignore[attr-defined]
+    config = recorder._writer._config
     assert config.log_dir == Path("./logs")
     assert config.retention_days == 365
     assert config.flush_interval_sec == 5.0
@@ -72,7 +70,7 @@ def test_from_env_disables_categories(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_LOG_INSIGHT_ENABLED", "no")
 
     recorder = Recorder.from_env()
-    config = recorder._writer._config  # type: ignore[attr-defined]
+    config = recorder._writer._config
     assert config.enabled_categories == frozenset({Category.AUDIT})
 
 
@@ -80,7 +78,7 @@ def test_from_env_typo_disables_silently(monkeypatch: pytest.MonkeyPatch) -> Non
     """Documented behavior: anything not in the truthy set disables the category."""
     monkeypatch.setenv("MCP_LOG_AUDIT_ENABLED", "ture")  # typo
     recorder = Recorder.from_env()
-    config = recorder._writer._config  # type: ignore[attr-defined]
+    config = recorder._writer._config
     assert Category.AUDIT not in config.enabled_categories
 
 
@@ -93,13 +91,11 @@ def test_from_env_invalid_int_raises_at_startup(
         Recorder.from_env()
 
 
-def test_from_env_uses_custom_log_dir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_from_env_uses_custom_log_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MCP_LOG_DIR", str(tmp_path / "custom_logs"))
     monkeypatch.setenv("MCP_LOG_RETENTION_DAYS", "30")
     recorder = Recorder.from_env()
-    config = recorder._writer._config  # type: ignore[attr-defined]
+    config = recorder._writer._config
     assert config.log_dir == tmp_path / "custom_logs"
     assert config.retention_days == 30
 
@@ -136,9 +132,7 @@ async def test_record_usage_never_raises_on_invalid_status(tmp_path: Path) -> No
     await recorder.start()
     try:
         # status="bogus" fails Pydantic Literal validation; recorder must swallow
-        await recorder.record_usage(
-            tool="fetch_data", status="bogus", duration_ms=10
-        )
+        await recorder.record_usage(tool="fetch_data", status="bogus", duration_ms=10)
     finally:
         await recorder.stop()
 
@@ -180,9 +174,7 @@ async def test_record_all_four_categories_end_to_end(tmp_path: Path) -> None:
         await recorder.record_audit(
             session_id=session_id, tool="fetch_data", result="success", duration_ms=1
         )
-        await recorder.record_usage(
-            tool="fetch_data", status="success", duration_ms=1
-        )
+        await recorder.record_usage(tool="fetch_data", status="success", duration_ms=1)
         await recorder.record_insight(
             session_id=session_id,
             tool="fetch_data",

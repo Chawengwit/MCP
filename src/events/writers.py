@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -19,9 +18,7 @@ class WriterConfig:
     flush_interval_sec: float = 5.0
     buffer_size: int = 100
     queue_max_size: int = 10_000
-    enabled_categories: frozenset[Category] = field(
-        default_factory=lambda: frozenset(Category)
-    )
+    enabled_categories: frozenset[Category] = field(default_factory=lambda: frozenset(Category))
 
 
 @dataclass
@@ -40,9 +37,7 @@ class JsonlWriter:
 
     def __init__(self, config: WriterConfig) -> None:
         self._config = config
-        self._queue: asyncio.Queue[Event | None] = asyncio.Queue(
-            maxsize=config.queue_max_size
-        )
+        self._queue: asyncio.Queue[Event | None] = asyncio.Queue(maxsize=config.queue_max_size)
         self._task: asyncio.Task[None] | None = None
         self._handles: dict[Category, _OpenFile] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -53,9 +48,7 @@ class JsonlWriter:
             return
         self._config.log_dir.mkdir(parents=True, exist_ok=True)
         for category in self._config.enabled_categories:
-            (self._config.log_dir / category.value).mkdir(
-                parents=True, exist_ok=True
-            )
+            (self._config.log_dir / category.value).mkdir(parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._run(), name="mcp.events.writer")
         # Sweep stale files left from prior runs (handles restart-with-old-logs).
         self._schedule_cleanup()
@@ -181,9 +174,7 @@ class JsonlWriter:
     def _schedule_cleanup(self) -> None:
         if self._cleanup_task is not None and not self._cleanup_task.done():
             return
-        self._cleanup_task = asyncio.create_task(
-            self._run_cleanup(), name="mcp.events.cleanup"
-        )
+        self._cleanup_task = asyncio.create_task(self._run_cleanup(), name="mcp.events.cleanup")
 
     async def _run_cleanup(self) -> None:
         try:

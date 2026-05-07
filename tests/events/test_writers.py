@@ -14,7 +14,7 @@ from src.events.schemas import (
 from src.events.writers import JsonlWriter, WriterConfig
 
 
-def _audit(tool: str = "fetch_data", **kwargs) -> AuditEvent:  # type: ignore[no-untyped-def]
+def _audit(tool: str = "fetch_data", **kwargs) -> AuditEvent:
     return AuditEvent(
         session_id=uuid4(),
         tool=tool,
@@ -57,9 +57,7 @@ async def test_writer_appends_jsonl_per_category(tmp_path: Path) -> None:
 
 
 async def test_writer_filename_uses_event_month(tmp_path: Path) -> None:
-    writer = JsonlWriter(
-        WriterConfig(log_dir=tmp_path, flush_interval_sec=0.05, buffer_size=1)
-    )
+    writer = JsonlWriter(WriterConfig(log_dir=tmp_path, flush_interval_sec=0.05, buffer_size=1))
     await writer.start()
     try:
         e = _audit()
