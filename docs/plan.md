@@ -113,6 +113,7 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 2. Standardize response shape (success: `data` + `metadata`; error: `error` with code/message/details)
 3. Implement large-response handling (truncate + metadata; only return `RESPONSE_TOO_LARGE` when truncation isn't safe — e.g., binary/streaming)
 4. Integrate auto-authentication with tool execution
+5. **Wire `Recorder` into the tool call path** — every invocation calls `record_audit` + `record_usage` + `record_insight`; gateway calls `record_debug` only when `MCP_LOG_DEBUG_ENABLED=true`. See [`CLAUDE.md` § Activity Logging > Recording Rules](../CLAUDE.md).
 
 ### Phase 6: Testing & Documentation
 1. Unit tests per module

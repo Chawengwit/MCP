@@ -54,14 +54,11 @@ def cleanup_old_logs(
             except OSError as exc:
                 errors.append((path, str(exc)))
 
-    oldest_deleted = (
-        min((_parse_filename_date(p.name) for p in deleted), default=None)
-        if deleted
-        else None
-    )
-    return CleanupResult(
-        deleted=deleted, oldest_deleted=oldest_deleted, errors=errors
-    )
+    # Filter Nones so mypy can narrow to date; `deleted` only contains
+    # paths whose filenames already parsed successfully above.
+    parsed_dates = (d for p in deleted if (d := _parse_filename_date(p.name)) is not None)
+    oldest_deleted = min(parsed_dates, default=None)
+    return CleanupResult(deleted=deleted, oldest_deleted=oldest_deleted, errors=errors)
 
 
 def _parse_filename_date(name: str) -> date | None:

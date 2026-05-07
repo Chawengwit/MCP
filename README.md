@@ -55,7 +55,7 @@ MCP/
 ├── docs/
 │   └── plan.md                # Implementation plan / roadmap
 ├── tests/
-│   └── events/                # Unit tests for src/events/ (27 passing tests)
+│   └── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
 ├── .claude/commands/          # Slash commands for the dev workflow
 │   ├── generate-prp.md        #   /generate-prp INITIAL.md  → PRPs/{feature}.md
 │   └── execute-prp.md         #   /execute-prp PRPs/{...}   → implements + validates
@@ -297,7 +297,7 @@ directly.
 | 4 | API Gateway (REST + GraphQL) | ⏳ pending |
 | 5 | Tools & Integration | ⏳ pending |
 | 6 | Testing & Polish | ⏳ ongoing |
-| 7 | Activity Logging (`src/events/`) | ✅ done — 27 passing tests |
+| 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
 Future scalability ideas (web UI, multi-tenant, caching, etc.) live in

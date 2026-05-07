@@ -78,7 +78,5 @@ def _redact_qs(qs: str) -> str:
     pairs = parse_qsl(qs, keep_blank_values=True)
     if not pairs:
         return qs
-    redacted_pairs = [
-        (k, REDACTED if k.lower() in DEFAULT_QUERY_KEYS else v) for k, v in pairs
-    ]
+    redacted_pairs = [(k, REDACTED if k.lower() in DEFAULT_QUERY_KEYS else v) for k, v in pairs]
     return urlencode(redacted_pairs)

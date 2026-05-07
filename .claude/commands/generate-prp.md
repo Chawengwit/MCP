@@ -1,5 +1,5 @@
 ---
-description: Generate a PRP (Product Requirements Prompt) from a feature file (typically INITIAL.md). Researches the codebase + docs, then writes PRPs/{feature}.md as an implementation blueprint.
+description: Generate a PRP from INITIAL.md — researches codebase + docs, writes PRPs/{feature}.md.
 argument-hint: <feature-file>
 ---
 

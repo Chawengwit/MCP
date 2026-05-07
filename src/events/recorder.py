@@ -31,7 +31,7 @@ class Recorder:
         self._writer = writer
 
     @classmethod
-    def from_env(cls) -> "Recorder":
+    def from_env(cls) -> Recorder:
         log_dir = Path(os.getenv("MCP_LOG_DIR", "./logs"))
         retention_days = int(os.getenv("MCP_LOG_RETENTION_DAYS", "365"))
         flush_interval = float(os.getenv("MCP_LOG_FLUSH_INTERVAL_SEC", "5"))

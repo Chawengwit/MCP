@@ -1,5 +1,5 @@
 ---
-description: Execute a PRP (Product Requirements Prompt) — implements the feature, runs validation gates (ruff, mypy, pytest), and iterates until green.
+description: Execute a PRP — implements the feature and runs ruff + mypy + pytest until green.
 argument-hint: <prp-file>
 ---
 
