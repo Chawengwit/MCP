@@ -48,3 +48,4 @@ logs/
 
 # Local Claude Code workspace state (keep CLAUDE.md committed)
 .claude/local/
+.claude/worktrees/
