@@ -16,16 +16,27 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 os.chdir(_PROJECT_ROOT)
 
-from mcp import types
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from pydantic import ValidationError
+# Load .env so ${VAR} placeholders in api_configs.json resolve.
+from dotenv import load_dotenv  # noqa: E402
 
-from src.auth import Credentials, OAuth, OAuthConfig
-from src.config import ApiConfig, load_api_configs
-from src.events import Recorder
-from src.gateway import GraphQLClient, RestClient
-from src.tools import (
+_dotenv_path = _PROJECT_ROOT / ".env"
+if not load_dotenv(_dotenv_path):
+    print(
+        f"[mcp.server] No .env file found at {_dotenv_path}; "
+        "relying on shell environment for ${VAR} substitution.",
+        file=sys.stderr,
+    )
+
+from mcp import types  # noqa: E402
+from mcp.server import Server  # noqa: E402
+from mcp.server.stdio import stdio_server  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+
+from src.auth import Credentials, OAuth, OAuthConfig  # noqa: E402
+from src.config import ApiConfig, load_api_configs  # noqa: E402
+from src.events import Recorder  # noqa: E402
+from src.gateway import GraphQLClient, RestClient  # noqa: E402
+from src.tools import (  # noqa: E402
     FetchDataInput,
     GetStatusInput,
     GraphQLInput,

@@ -1,0 +1,38 @@
+{
+  "apis": {
+    "github": {
+      "type": "rest",
+      "base_url": "https://api.github.com",
+      "auth": {
+        "type": "oauth2",
+        "provider": "github",
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "redirect_uri": "http://127.0.0.1:8765/callback",
+        "scopes": ["read:user", "public_repo"]
+      },
+      "endpoints": {
+        "get_user": {
+          "method": "GET",
+          "path": "/user"
+        },
+        "list_repos": {
+          "method": "GET",
+          "path": "/user/repos",
+          "query_params": ["sort", "per_page"]
+        }
+      },
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "summary",
+        "redact_fields": ["email", "notification_email"]
+      },
+      "limits": {
+        "timeout_seconds": 30,
+        "max_retries": 3
+      }
+    }
+  }
+}

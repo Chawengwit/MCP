@@ -311,11 +311,32 @@ pytest tests/ -v          # must include the 27 existing events tests
 - Sensitive-data redaction ([redaction.py](src/events/redaction.py)) — **always reuse**
 - Test layout with pytest-asyncio auto mode ([tests/events/](tests/events/))
 
+## Helper Scripts (`scripts/`)
+
+CLI utilities outside the MCP server's runtime path. They share the same
+project-root bootstrap and `.env` loading as `src/server.py`, so any new
+script should follow that pattern.
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/oauth_login.py` | Run the OAuth 2.0 + PKCE flow for an API in `api_configs.json`, store the token in keyring. Use when `fetch_data` / `send_data` returns `AUTH_REQUIRED`. |
+
+```bash
+python -m scripts.oauth_login github           # log in
+python -m scripts.oauth_login github --clear   # delete + re-log in
+```
+
+The MCP tools intentionally do NOT trigger the browser flow themselves —
+they return `AUTH_REQUIRED` so Claude can surface it cleanly. Operators
+run `scripts/oauth_login.py` once per provider; the stored token is then
+auto-refreshed by `Credentials.get()` near expiry.
+
 ## When Adding a New API
 
 1. Add an entry to `config/api_configs.json` with `base_url`, `type` (`rest`/`graphql`), `auth` block, and `endpoints`.
 2. No code changes should be required for standard REST/GraphQL APIs.
 3. Custom auth providers may need additions to `src/auth/oauth.py`.
+4. For OAuth APIs: run `python -m scripts.oauth_login <api_id>` to perform the initial login.
 
 ## Things to Watch For
 
