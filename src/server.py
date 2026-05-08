@@ -29,7 +29,6 @@ if not load_dotenv(_dotenv_path):
 
 from mcp import types  # noqa: E402
 from mcp.server import Server  # noqa: E402
-from mcp.server.stdio import stdio_server  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from src.auth import Credentials, OAuth, OAuthConfig  # noqa: E402
@@ -50,6 +49,14 @@ from src.tools import (  # noqa: E402
     list_apis,
     send_data_handler,
 )
+from src.transport import (  # noqa: E402
+    LoopbackGuardError,
+    resolve_http_settings,
+    run_http,
+    run_stdio,
+)
+
+VALID_TRANSPORTS = ("stdio", "http")
 
 
 def _build_oauth_configs(api_configs: dict[str, ApiConfig]) -> dict[str, OAuthConfig]:
@@ -274,7 +281,24 @@ async def main() -> None:
     server = _build_server(registry)
     _log("MCP server initialized with tools")
 
-    # Set up signal handlers — flip the event, let main() exit naturally.
+    transport = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+    if transport not in VALID_TRANSPORTS:
+        _log_error(f"Unknown MCP_TRANSPORT={transport!r}; expected one of {VALID_TRANSPORTS}")
+        await recorder.stop()
+        sys.exit(1)
+
+    try:
+        if transport == "stdio":
+            await _serve_stdio(server)
+        else:  # transport == "http"
+            await _serve_http(server)
+    finally:
+        await recorder.stop()
+        _log("MCP server stopped")
+
+
+async def _serve_stdio(server: Server) -> None:
+    """Run the server over stdio with SIGINT/SIGTERM handling."""
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -291,26 +315,27 @@ async def main() -> None:
         _log("Warning: Signal handlers not supported on this platform (Windows?)")
 
     _log("MCP server started, listening for messages on stdio...")
+    await run_stdio(server, shutdown_event)
 
+
+async def _serve_http(server: Server) -> None:
+    """Run the server over Streamable HTTP. uvicorn owns SIGINT/SIGTERM.
+
+    Resolves settings here (single env read) so the banner can include the
+    bound address before `run_http` enters the uvicorn serve loop. Both the
+    port-validation `ValueError` and the public-bind `LoopbackGuardError`
+    exit through the same fail-loud path.
+    """
     try:
-        async with stdio_server() as (read_stream, write_stream):
-            init_options = server.create_initialization_options()
-            server_task = asyncio.create_task(server.run(read_stream, write_stream, init_options))
-            shutdown_task = asyncio.create_task(shutdown_event.wait())
-
-            done, pending = await asyncio.wait(
-                {server_task, shutdown_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            for task in done:
-                exc = task.exception()
-                if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                    raise exc
-    finally:
-        await recorder.stop()
-        _log("MCP server stopped")
+        host, port, token = resolve_http_settings()
+        _log(
+            f"HTTP transport listening on http://{host}:{port}/mcp "
+            f"(bearer={'set' if token else 'NOT set — loopback only'})"
+        )
+        await run_http(server, host=host, port=port, token=token)
+    except (ValueError, LoopbackGuardError) as exc:
+        _log_error(str(exc))
+        sys.exit(1)
 
 
 def _log(msg: str) -> None:

@@ -16,4 +16,9 @@ pydantic>=2.5.0
 # Environment variable management
 python-dotenv>=1.0.0
 
+# HTTP transport (Phase 8) — promoted from transitive deps of `mcp` to explicit
+# direct deps because src/transport/http.py uses them by name.
+uvicorn>=0.30
+starlette>=0.40
+
 # Note: `webbrowser` is part of Python's standard library — no install needed.

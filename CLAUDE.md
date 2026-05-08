@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-Phases 1–7 are implemented and tested (**247 passing unit + integration tests**):
+Phases 1–8 are implemented and tested (**288 passing unit + integration tests**):
 
 - **Phase 1** — project setup
 - **Phase 2** — core MCP server (`src/server.py`), config loader (`src/config.py`), tool registry (`src/tools/`)
@@ -16,8 +16,9 @@ Phases 1–7 are implemented and tested (**247 passing unit + integration tests*
 - **Phase 6** — integration tests (subprocess smoke test + full-flow), example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging
 - **Phase 7** — activity logging subsystem (`src/events/`)
 - **Post-v0** — GitHub OAuth integration shipped (`scripts/oauth_login.py`, `config/api_configs.json`); verified end-to-end on Claude Desktop and OpenAI Codex CLI (both stdio).
+- **Phase 8** — HTTP transport (`src/transport/`): Streamable HTTP via uvicorn + Starlette, Bearer-token middleware, loopback-bind-without-token guard. Selectable via `MCP_TRANSPORT={stdio,http}` env var; stdio remains the default.
 
-The active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md). Future work (out of scope for Phase 8) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
+Future work (multi-tenant, public-deploy recipes, additional transports) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Architecture
 
@@ -37,8 +38,28 @@ What this file pins:
   persists the resulting token in keyring. MCP tools intentionally surface
   `AUTH_REQUIRED` rather than auto-opening a browser, so this script is the
   user-facing counterpart for first-time login per provider.
-- The active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md).
-  New features start with a delta there, then `/generate-prp` → `/execute-prp`.
+- **`src/transport/`** (Phase 8) — transport-layer abstraction. `src/server.py`
+  builds a single `Server` instance and dispatches to `run_stdio` or `run_http`
+  based on `MCP_TRANSPORT`. Tool handlers are transport-agnostic; only the wire
+  format around them changes. New transports plug in here without touching
+  tools / gateway / auth.
+- New features start with a delta in [`INITIAL.md`](INITIAL.md), then
+  `/generate-prp` → `/execute-prp`.
+
+### Transport Selection
+
+| `MCP_TRANSPORT` | Module | Used by |
+|-----------------|--------|---------|
+| `stdio` (default) | `src/transport/stdio.py` | Claude Desktop, Codex CLI, any process-spawn MCP client |
+| `http` | `src/transport/http.py` | ChatGPT Connectors, MCP Inspector, remote HTTP clients |
+
+**HTTP-mode invariants** (enforced in code):
+- Loopback binds (`127.0.0.1`, `::1`, `localhost`) are allowed without `MCP_HTTP_BEARER_TOKEN`.
+- Any other host **without** a bearer token → fail-loud `LoopbackGuardError` at startup.
+- Bearer comparison uses `secrets.compare_digest` on equal-length bytes; length mismatch short-circuits to `401`.
+- Bearer middleware is a **pure-ASGI** callable (NOT `BaseHTTPMiddleware`) — `BaseHTTPMiddleware` buffers responses and would break the SSE streams Streamable HTTP can return.
+- `uvicorn` owns SIGINT/SIGTERM; the stdio branch keeps the existing `loop.add_signal_handler` setup. Don't double-install.
+- All logs stay on **stderr** in both transports (uvicorn `log_config=None`, `access_log=False`). The stdout reservation isn't strictly needed in HTTP mode, but keeping the discipline avoids future transport-toggle surprises.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
@@ -297,7 +318,7 @@ loop is:
 ruff check src/ scripts/ tests/ --fix
 ruff format src/ scripts/ tests/
 mypy src/ scripts/ tests/
-pytest tests/ -v          # baseline 247 passing; new features add to that count
+pytest tests/ -v          # baseline 288 passing; new features add to that count
 ```
 
 ### When to Use

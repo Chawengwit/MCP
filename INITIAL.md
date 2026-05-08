@@ -10,8 +10,12 @@
 
 ## STATUS
 
-**Phases 1–7 shipped.** GitHub OAuth integration verified end-to-end against Claude
-Desktop **and** Codex CLI (both stdio transport).
+**Phases 1–8 shipped.** GitHub OAuth integration verified end-to-end against Claude
+Desktop **and** Codex CLI (stdio). HTTP transport verified via the test suite
+(38 transport unit tests covering Bearer auth, loopback guard, dispatcher
+routing, env-var validation, the `/mcp` no-redirect regression, and a full
+initialize → tools/list round-trip via Starlette TestClient — plus 3
+subprocess smoke tests at `tests/integration/test_http_smoke.py`).
 
 | Phase | PRP | Status |
 |-------|-----|--------|
@@ -19,14 +23,31 @@ Desktop **and** Codex CLI (both stdio transport).
 | 4 — API Gateway | [PRPs/phase4-gateway.md](PRPs/phase4-gateway.md) | ✅ Done |
 | 5 — Tools & Integration | [PRPs/phase5-tools.md](PRPs/phase5-tools.md) | ✅ Done |
 | 6 — Testing & Documentation | [PRPs/phase6-testing-docs.md](PRPs/phase6-testing-docs.md) | ✅ Done |
-| **GitHub OAuth integration** | (no PRP — direct edit) | ✅ Done — `scripts/oauth_login.py`, `config/api_configs.json`, real-world OAuth flow verified |
+| **GitHub OAuth integration** | (no PRP — direct edit) | ✅ Done — `scripts/oauth_login.py`, real-world flow verified |
+| **8 — HTTP Transport** | [PRPs/phase8-http-transport.md](PRPs/phase8-http-transport.md) | ✅ Done — `src/transport/` package, `MCP_TRANSPORT` switch, Bearer middleware, loopback guard |
 
-**Total test count: 247 passing** (was 232 at v0 ship; +10 oauth_login tests + 5
-helper unit tests in this delta).
+**Total test count: 288 passing** (232 at v0 ship → 247 after GitHub integration
+→ 288 with Phase 8's 41 new tests — 38 transport unit + 3 HTTP subprocess smoke).
 
 ---
 
-## NEXT FEATURE — Phase 8: HTTP Transport
+## NEXT FEATURE
+
+The MCP Data Gateway is feature-complete relative to the original plan plus Phase 8.
+To start a new feature, replace this section with a DELTA describing ONE feature
+(FEATURE / ACCEPTANCE CRITERIA / EDGE CASES / OUT OF SCOPE / REFERENCE PATTERNS),
+then run `/generate-prp INITIAL.md` and `/execute-prp PRPs/{feature}.md`.
+
+Future-scope candidates (from `docs/plan.md` § Future Scalability):
+- Public-deploy recipes (Dockerfile, systemd / launchd, reverse-proxy + TLS)
+- Multi-tenant credential isolation (per-user keychain namespace)
+- Persistent storage layer (SQLite / Postgres) for fetched data history
+- Response caching / rate-limit smoothing beyond Retry-After
+- Additional transports (WebSocket) — only if a real client demands it
+
+---
+
+## ARCHIVE — Phase 8 feature delta (now shipped)
 
 ### FEATURE
 Add an HTTP transport to the MCP Data Gateway so the server can be reached by

@@ -5,10 +5,12 @@
 > `/execute-prp` — see [`CLAUDE.md` § Context Engineering Workflow](../CLAUDE.md). New
 > features start by writing a delta in [`INITIAL.md`](../INITIAL.md).
 >
-> **Status (2026-05-08):** Phases 1–7 shipped + GitHub OAuth integration shipped
-> (`scripts/oauth_login.py`). **247 tests passing.** Verified end-to-end against Claude
-> Desktop and OpenAI Codex CLI over stdio. Phase 8 (HTTP transport) is the active
-> delta — see [`INITIAL.md`](../INITIAL.md).
+> **Status (2026-05-08):** Phases 1–8 shipped + GitHub OAuth integration shipped.
+> **288 tests passing.** Verified end-to-end against Claude Desktop and OpenAI Codex
+> CLI over stdio, and against the Streamable HTTP test suite (38 transport unit tests
+> + 3 subprocess smoke tests
+> covering Bearer auth, loopback guard, and a full initialize → tools/list round-trip).
+> Selectable via `MCP_TRANSPORT={stdio,http}`; stdio remains the default.
 
 ## Context
 Building a Python-based **Model Context Protocol (MCP) server** that acts as a data gateway, enabling Claude to send/receive data from various external APIs via a unified interface. The system features OAuth 2.0 authentication and supports generic REST/GraphQL API integration, with a foundation for future evolution into a standalone MCP App.
@@ -160,20 +162,33 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 5. ✓ `.env.example` documents the per-provider credential pattern
 6. ✓ 15 new tests (5 helper unit + 10 CLI integration); test count: 232 → **247**
 
-### Phase 8: HTTP Transport (planned — DELTA in `INITIAL.md`)
-1. Add a `MCP_TRANSPORT={stdio,http}` switch; stdio remains default
-2. New `src/transport/` package — extract stdio bootstrap into `transport/stdio.py`,
-   add `transport/http.py` with Streamable HTTP via `mcp.server.streamable_http_manager`
-3. Bearer-token auth middleware (`MCP_HTTP_BEARER_TOKEN`); fail-loud refuse-to-start
-   when bound non-loopback without a token configured
-4. New env vars: `MCP_HTTP_HOST` (default `127.0.0.1`), `MCP_HTTP_PORT` (default `8080`)
-5. New deps: `uvicorn` + `starlette` (runtime, used by upstream SDK examples)
-6. Tests under `tests/transport/` — selection, auth, round-trip via ASGI test client
-7. Out of scope: WebSocket, legacy SSE, multi-tenant token isolation, public-deploy recipes
-
-See [`INITIAL.md`](../INITIAL.md) for the full feature delta with edge cases and
-expected deliverables. Implementation goes through `/generate-prp INITIAL.md` →
-`/execute-prp PRPs/{...}.md` per the Context Engineering workflow in CLAUDE.md.
+### Phase 8: HTTP Transport ✓ (complete)
+1. ✓ `MCP_TRANSPORT={stdio,http}` switch in `src/server.py`; stdio remains default
+2. ✓ `src/transport/` package — `transport/stdio.py` (extracted) + `transport/http.py`
+   (Streamable HTTP via `mcp.server.streamable_http_manager.StreamableHTTPSessionManager`,
+   wrapped in a Starlette app with lifespan + Mount + uvicorn `Server.serve()`)
+3. ✓ Pure-ASGI Bearer-token middleware (NOT `BaseHTTPMiddleware` — would buffer
+   SSE responses); `secrets.compare_digest` on equal-length bytes
+4. ✓ `LoopbackGuardError` fail-loud refuse-to-start when bound non-loopback
+   without a token configured
+5. ✓ New env vars: `MCP_TRANSPORT`, `MCP_HTTP_HOST` (default `127.0.0.1`),
+   `MCP_HTTP_PORT` (default `8080`), `MCP_HTTP_BEARER_TOKEN`
+6. ✓ `uvicorn` + `starlette` promoted from transitive (`mcp`) to direct deps
+7. ✓ 38 tests under `tests/transport/` + 3 subprocess smoke tests at
+   `tests/integration/test_http_smoke.py` — dispatcher routing, loopback
+   guard parametrized over loopback/public hosts, Bearer auth
+   (missing/wrong/length-mismatch/correct), 401 body never echoes the
+   supplied token, `resolve_http_settings` env-var validation, `run_http`
+   per-arg env fallback (explicit / no-args / partial overlay /
+   explicit-empty-token), `/mcp` no-redirect regression, full
+   initialize → notifications/initialized → tools/list round-trip via
+   Starlette `TestClient`, and a real-uvicorn boot + 401/200/404 +
+   loopback-guard-exit + JSONL-leak canary at the OS-process level
+8. ✓ Shared subprocess scaffolding extracted to
+   `tests/integration/_helpers.py` (`spawn_server`, `isolated_env`,
+   `wait_for_ready`) — used by both stdio and HTTP smoke tests
+9. Out of scope (deferred): WebSocket, legacy SSE, multi-tenant token
+   isolation, public-deploy recipes (Dockerfile, systemd, reverse proxy)
 
 ## Critical Files (status)
 - `src/server.py` — MCP server entry point ✓ **implemented**

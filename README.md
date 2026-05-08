@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: v0 shipped + first real API integration live.** All seven planned phases are implemented and tested — the core MCP server, OAuth + keyring authentication, REST/GraphQL gateway, all five MCP tools, integration tests, and the activity-logging subsystem. The first real provider (GitHub OAuth) is wired up end-to-end with `scripts/oauth_login.py` and verified against **Claude Desktop** and **OpenAI Codex CLI** (both stdio). **247 passing tests**. The next major work is **Phase 8 — HTTP transport** ([`INITIAL.md`](INITIAL.md)). See the [Development Roadmap](#development-roadmap) for per-phase deliverables or [`docs/plan.md`](docs/plan.md) for the full breakdown.
+> **Status: stdio + HTTP transports live.** All seven planned phases plus the GitHub OAuth integration plus Phase 8 (HTTP transport) are shipped. Selectable via `MCP_TRANSPORT={stdio,http}` (stdio default). Verified against **Claude Desktop**, **OpenAI Codex CLI** (stdio), and the Streamable HTTP test suite. **288 passing tests**. See the [Development Roadmap](#development-roadmap) or [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -48,12 +48,15 @@ MCP/
 │   │   ├── auth_resolver.py   # auth.type branching (oauth2/bearer/api_key/None)
 │   │   └── mcp_tools.py       # fetch_data/send_data/execute_graphql/get_status
 │   ├── config.py              # API config loader with ${VAR} substitution (implemented ✓)
-│   └── events/                # Activity logging (implemented ✓)
-│       ├── schemas.py         # Pydantic models (audit/debug/usage/insight)
-│       ├── redaction.py       # Sensitive data redaction
-│       ├── retention.py       # Per-month file rotation cleanup
-│       ├── writers.py         # Async JSONL writer + queue
-│       └── recorder.py        # Public Recorder API
+│   ├── events/                # Activity logging (implemented ✓)
+│   │   ├── schemas.py         # Pydantic models (audit/debug/usage/insight)
+│   │   ├── redaction.py       # Sensitive data redaction
+│   │   ├── retention.py       # Per-month file rotation cleanup
+│   │   ├── writers.py         # Async JSONL writer + queue
+│   │   └── recorder.py        # Public Recorder API
+│   └── transport/             # Transport layer (Phase 8 — implemented ✓)
+│       ├── stdio.py           # stdio transport (default)
+│       └── http.py            # Streamable HTTP + Bearer middleware + loopback guard
 ├── config/
 │   ├── api_configs.json       # API service configurations (committed; uses ${VAR} placeholders)
 │   └── api_configs.example.json  # Template with all four auth.type variants
@@ -67,6 +70,7 @@ MCP/
 │   ├── gateway/               # Unit tests for src/gateway/ (61 cases — implemented ✓)
 │   ├── tools/                 # Unit tests for src/tools/ (37 cases — implemented ✓)
 │   ├── scripts/               # Unit tests for scripts/ (15 cases — implemented ✓)
+│   ├── transport/             # Unit tests for src/transport/ (23 cases — implemented ✓)
 │   ├── integration/           # Full-flow + subprocess smoke tests (5 cases — implemented ✓)
 │   ├── test_config.py         # Config loader tests
 │   ├── test_server.py         # Server bootstrap + _build_oauth_configs tests
@@ -146,6 +150,7 @@ B) Subsequent tool calls (auto, no UI)
 - **keyring** — Cross-platform secure credential storage
 - **pydantic** — Data validation and modeling
 - **python-dotenv** — Environment variable management
+- **uvicorn + starlette** — ASGI server + framework for the HTTP transport (Phase 8)
 
 ## Quickstart
 
@@ -226,7 +231,7 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 247 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, scripts/, plus integration + example-config drift tests.
+# Currently 288 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, src/transport/, scripts/, plus integration + example-config drift tests.
 ```
 
 ### Running the MCP Server
@@ -278,9 +283,65 @@ round-trip identically to Claude Desktop.
 ### Other MCP clients (Cursor, Cline, etc.)
 
 Any client that supports stdio MCP servers will work with the same shape: a
-command and an args list. **HTTP transport** is planned for Phase 8
-([`INITIAL.md`](INITIAL.md)) and will enable remote clients (ChatGPT
-Connectors, web-based MCP clients) without changing the stdio path.
+command and an args list.
+
+### HTTP transport (ChatGPT Connectors, MCP Inspector, custom HTTP clients)
+
+Set `MCP_TRANSPORT=http` to expose the server as a Streamable HTTP endpoint
+instead of stdio.
+
+```bash
+# Generate a strong bearer token
+export MCP_HTTP_BEARER_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+
+# Run on loopback (default host/port)
+MCP_TRANSPORT=http \
+MCP_HTTP_HOST=127.0.0.1 MCP_HTTP_PORT=8080 \
+python -m src.server
+```
+
+The server prints its bind address to stderr and serves the MCP protocol at
+`POST /mcp`, `GET /mcp`, and `DELETE /mcp`.
+
+**Test from curl:**
+
+```bash
+# Without the token → 401
+curl -i -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+
+# With the token → initializes a session
+curl -i -X POST http://127.0.0.1:8080/mcp \
+  -H "Authorization: Bearer $MCP_HTTP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize",
+       "params":{"protocolVersion":"2025-11-25","capabilities":{},
+                 "clientInfo":{"name":"curl","version":"1.0"}}}'
+```
+
+The response includes a `Mcp-Session-Id` header — echo it on every subsequent
+request via `-H "mcp-session-id: <value>"`.
+
+**Connect from MCP Inspector** (great for interactive debugging):
+
+```bash
+npx @modelcontextprotocol/inspector
+# UI opens at http://localhost:6274
+# Transport: Streamable HTTP
+# URL:       http://127.0.0.1:8080/mcp
+# Auth:      Bearer <your token>
+```
+
+**Connect from ChatGPT Custom Connectors**: paste the public URL of the server
+(via reverse proxy / Cloudflare Tunnel / ngrok) and the bearer token. ChatGPT
+talks server-to-server, so no CORS configuration is needed.
+
+**Loopback safety guard.** The server **refuses to start** if `MCP_HTTP_HOST`
+is non-loopback (`0.0.0.0`, public IP, etc.) and `MCP_HTTP_BEARER_TOKEN` is
+unset or empty — preventing accidental unauthenticated public binds. Set the
+token, or bind to `127.0.0.1`.
 
 ### Example Interactions
 
@@ -433,8 +494,8 @@ directly.
 | 5 | Tools & Integration | ✅ done — `fetch_data`/`send_data`/`execute_graphql`/`get_status`, `auth.type` branching (oauth2/bearer/api_key/null), Recorder triple per call, secret redaction in insight events, 37 tests |
 | 6 | Testing & Polish | ✅ done — subprocess smoke test, example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging |
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
-| Post-v0 | GitHub OAuth integration | ✅ done — `scripts/oauth_login.py` operator CLI, real GitHub OAuth flow, verified on Claude Desktop **and** Codex CLI, 15 new tests (247 total) |
-| **8** | **HTTP Transport** | 🚧 planned — `MCP_TRANSPORT={stdio,http}` switch, Streamable HTTP, Bearer-token middleware, single-tenant. Delta in [`INITIAL.md`](INITIAL.md) |
+| Post-v0 | GitHub OAuth integration | ✅ done — `scripts/oauth_login.py` operator CLI, real GitHub OAuth flow, verified on Claude Desktop **and** Codex CLI, 15 new tests |
+| 8 | HTTP Transport | ✅ done — `MCP_TRANSPORT={stdio,http}` switch, Streamable HTTP via uvicorn + Starlette, Bearer-token middleware, loopback-bind safety guard, per-arg env fallback for `run_http` settings, single-tenant; 41 new tests (38 transport unit + 3 HTTP subprocess smoke) — 288 total |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
 Future scalability ideas (web UI, multi-tenant, caching, additional transports,
