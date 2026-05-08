@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-All seven planned phases are implemented and tested (232 passing unit + integration tests):
+Phases 1–7 are implemented and tested (**247 passing unit + integration tests**):
 
 - **Phase 1** — project setup
 - **Phase 2** — core MCP server (`src/server.py`), config loader (`src/config.py`), tool registry (`src/tools/`)
@@ -15,8 +15,9 @@ All seven planned phases are implemented and tested (232 passing unit + integrat
 - **Phase 5** — full MCP tool surface (`src/tools/`: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`)
 - **Phase 6** — integration tests (subprocess smoke test + full-flow), example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging
 - **Phase 7** — activity logging subsystem (`src/events/`)
+- **Post-v0** — GitHub OAuth integration shipped (`scripts/oauth_login.py`, `config/api_configs.json`); verified end-to-end on Claude Desktop and OpenAI Codex CLI (both stdio).
 
-The codebase is feature-complete relative to the plan. Future work (out of scope) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
+The active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md). Future work (out of scope for Phase 8) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Architecture
 
@@ -32,12 +33,16 @@ What this file pins:
   **`src/gateway/` (Phase 4)**, **`src/tools/` (Phase 5 — `fetch_data`/`send_data`/
   `execute_graphql`/`get_status` plus the existing `list_apis`)**, and **the integration
   tests + docs polish (Phase 6)** are also complete and follow the `src/events/` patterns.
-- The roadmap in `docs/plan.md` is closed. Open new features by writing a delta in
-  `INITIAL.md` and running `/generate-prp`.
+- **`scripts/oauth_login.py`** — operator CLI that drives the OAuth 2.0 + PKCE flow and
+  persists the resulting token in keyring. MCP tools intentionally surface
+  `AUTH_REQUIRED` rather than auto-opening a browser, so this script is the
+  user-facing counterpart for first-time login per provider.
+- The active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md).
+  New features start with a delta there, then `/generate-prp` → `/execute-prp`.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
-- **Auto-OAuth**: Tools detect missing/expired credentials and automatically trigger browser popup.
+- **Operator-driven OAuth**: Tools detect missing/expired credentials and return `AUTH_REQUIRED` so the client surfaces it cleanly. The browser flow runs out-of-band via `python -m scripts.oauth_login <api_id>`. Once the token is stored in keyring, subsequent calls auto-refresh near expiry inside `Credentials.get()`.
 - **Async throughout**: Use `httpx` async client, `asyncio` for I/O.
 - **Secure by default**: Credentials never written to disk in plaintext — always via `keyring`.
 
@@ -289,10 +294,10 @@ loop is:
 ### Validation Gates (run during `/execute-prp`)
 
 ```bash
-ruff check src/ tests/ --fix
-ruff format src/ tests/
-mypy src/ tests/
-pytest tests/ -v          # must include the 27 existing events tests
+ruff check src/ scripts/ tests/ --fix
+ruff format src/ scripts/ tests/
+mypy src/ scripts/ tests/
+pytest tests/ -v          # baseline 247 passing; new features add to that count
 ```
 
 ### When to Use

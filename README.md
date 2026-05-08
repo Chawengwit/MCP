@@ -1,6 +1,6 @@
 # MCP Data Gateway
 
-> **Status: Feature-complete (v0).** All seven planned phases are implemented and tested — the core MCP server, OAuth + keyring authentication, REST/GraphQL gateway, all five MCP tools, integration tests, and the activity-logging subsystem. **232 passing tests**. See the [Development Roadmap](#development-roadmap) for what each phase delivered, or [`docs/plan.md`](docs/plan.md) for the per-phase breakdown.
+> **Status: v0 shipped + first real API integration live.** All seven planned phases are implemented and tested — the core MCP server, OAuth + keyring authentication, REST/GraphQL gateway, all five MCP tools, integration tests, and the activity-logging subsystem. The first real provider (GitHub OAuth) is wired up end-to-end with `scripts/oauth_login.py` and verified against **Claude Desktop** and **OpenAI Codex CLI** (both stdio). **247 passing tests**. The next major work is **Phase 8 — HTTP transport** ([`INITIAL.md`](INITIAL.md)). See the [Development Roadmap](#development-roadmap) for per-phase deliverables or [`docs/plan.md`](docs/plan.md) for the full breakdown.
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -9,7 +9,7 @@ A Python-based **Model Context Protocol (MCP) server** that acts as a unified da
 This MCP server provides:
 - **Generic data handling** for multiple data types
 - **Generic API gateway** supporting any REST or GraphQL endpoint
-- **OAuth 2.0 authentication** with automatic browser-based login flow
+- **OAuth 2.0 authentication** via an operator-run `scripts/oauth_login.py` (PKCE flow, `127.0.0.1` callback)
 - **Secure credential storage** using system keyring
 - **Foundation for MCP App** evolution in the future
 
@@ -19,11 +19,11 @@ This MCP server provides:
 |---------|-------------|
 | Multi-API Support | Connect to any number of external services through unified configuration |
 | REST + GraphQL | Native support for both REST and GraphQL APIs |
-| OAuth 2.0 | Full authorization code flow with automatic browser popup |
-| Token Refresh | Automatic token refresh and re-authentication when expired |
-| Secure Storage | Credentials stored encrypted via system keyring |
+| OAuth 2.0 | Full authorization code flow + PKCE, run once via `scripts/oauth_login.py` |
+| Token Refresh | Silent refresh inside `Credentials.get()` when ≤ 5 min from expiry |
+| Secure Storage | Credentials stored in OS keyring (Keychain / Credential Manager / Secret Service) |
 | Generic Data Models | Flexible schemas to handle any data shape |
-| Auto-Authentication | Tools automatically prompt login when needed |
+| Predictable Auth Surface | Tools return `AUTH_REQUIRED` when no token; operator runs `scripts/oauth_login.py` to obtain one |
 
 ## Architecture
 
@@ -55,15 +55,18 @@ MCP/
 │       ├── writers.py         # Async JSONL writer + queue
 │       └── recorder.py        # Public Recorder API
 ├── config/
-│   ├── api_configs.json       # API service configurations (gitignored)
-│   └── api_configs.example.json  # Template (committed)
+│   ├── api_configs.json       # API service configurations (committed; uses ${VAR} placeholders)
+│   └── api_configs.example.json  # Template with all four auth.type variants
 ├── docs/
 │   └── plan.md                # Implementation plan / roadmap
+├── scripts/                   # Operator CLI helpers (implemented ✓)
+│   └── oauth_login.py         # Drive OAuth 2.0 + PKCE flow, persist token in keyring
 ├── tests/
 │   ├── auth/                  # Unit tests for src/auth/ (49 cases — implemented ✓)
 │   ├── events/                # Unit tests for src/events/ (27 cases, 51 collected w/ parametrize)
 │   ├── gateway/               # Unit tests for src/gateway/ (61 cases — implemented ✓)
 │   ├── tools/                 # Unit tests for src/tools/ (37 cases — implemented ✓)
+│   ├── scripts/               # Unit tests for scripts/ (15 cases — implemented ✓)
 │   ├── integration/           # Full-flow + subprocess smoke tests (5 cases — implemented ✓)
 │   ├── test_config.py         # Config loader tests
 │   ├── test_server.py         # Server bootstrap + _build_oauth_configs tests
@@ -100,25 +103,39 @@ Per-module responsibilities and detailed module-by-module breakdown:
 
 ## Authentication Flow
 
-When Claude calls a tool that requires authentication:
+OAuth login is **operator-initiated** (one-time, per provider) and tools are
+**read-only with respect to credential acquisition** — they never auto-open
+the browser. This split keeps the request path predictable for clients
+(Claude Desktop, Codex CLI, etc.) and concentrates the browser flow in a
+single CLI surface that's easy to script and test.
 
 ```
+A) First-time login (operator runs once per provider)
+─────────────────────────────────────────────────────
+$ python -m scripts.oauth_login github
+        ↓
+1. Script builds authorize URL with PKCE
+2. Browser opens at provider's authorize page
+3. User clicks "Authorize"
+4. Callback at http://127.0.0.1:8765/callback receives auth code
+5. Script exchanges code for tokens
+6. TokenInfo persisted in OS keyring (service=mcp-data-gateway, account=<api_id>)
+
+
+B) Subsequent tool calls (auto, no UI)
+──────────────────────────────────────
 1. Claude invokes tool (e.g., fetch_data)
         ↓
 2. MCP checks credentials in keyring
         ↓
-3a. Valid token  →  Proceed with API call
-3b. Missing/Expired  →  Open browser popup for OAuth
+3a. Valid token                                       →  proceed with API call
+3b. Token < 5 min from expiry, refresh_token present  →  silent refresh, then proceed
+3c. No token / expired with no refresh                →  return AUTH_REQUIRED *
         ↓
-4. User logs in via browser
-        ↓
-5. Local callback server receives auth code
-        ↓
-6. Exchange auth code for access token
-        ↓
-7. Store token in keyring
-        ↓
-8. Resume original tool call
+4. Tool returns response (data + metadata, or {error: AUTH_REQUIRED})
+
+* On AUTH_REQUIRED, operator re-runs `python -m scripts.oauth_login <api_id>`
+  and then retries the original tool call.
 ```
 
 ## Tech Stack
@@ -209,7 +226,7 @@ pytest tests/
 # Run a specific test file with verbose output
 pytest tests/events/test_writers.py -v
 
-# Currently 232 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, plus integration + example-config drift tests.
+# Currently 247 tests passing across src/events/, src/auth/, src/gateway/, src/tools/, scripts/, plus integration + example-config drift tests.
 ```
 
 ### Running the MCP Server
@@ -223,28 +240,47 @@ The server boots, loads `config/api_configs.json`, starts the Recorder, builds t
 `execute_graphql`, `get_status`). On SIGINT/SIGTERM the Recorder queue drains and
 the server exits cleanly.
 
-### Connecting to Claude Code
+### Connecting to Claude Desktop
 
-Add this configuration to your Claude Code MCP settings:
+`server.py` performs its own bootstrap (`sys.path` + `os.chdir` + `load_dotenv`),
+so a `cwd` field in the client config is not required — point `args` at the
+script directly:
 
 ```json
 {
   "mcpServers": {
     "data-gateway": {
-      "command": "python",
-      "args": ["-m", "src.server"],
-      "cwd": "/path/to/mcp-data-gateway"
+      "command": "/path/to/mcp-data-gateway/.venv/bin/python",
+      "args": ["/path/to/mcp-data-gateway/src/server.py"]
     }
   }
 }
 ```
 
-Replace `/path/to/mcp-data-gateway` with the absolute path of your checkout. If
-you installed the project in a virtualenv, point `command` at that venv's
-Python instead of the system `python`:
+On macOS, this lives at
+`~/Library/Application Support/Claude/claude_desktop_config.json`.
+After editing, fully quit and relaunch Claude Desktop; the 🔌 menu should list
+`data-gateway` with all five tools.
 
-- macOS / Linux: `/path/to/mcp-data-gateway/.venv/bin/python`
-- Windows: `C:\path\to\mcp-data-gateway\.venv\Scripts\python.exe`
+### Connecting to OpenAI Codex CLI
+
+Codex CLI uses TOML at `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.data-gateway]
+command = "/path/to/mcp-data-gateway/.venv/bin/python"
+args = ["/path/to/mcp-data-gateway/src/server.py"]
+```
+
+Verified against `codex` CLI — `list_apis`, `get_status`, and `fetch_data`
+round-trip identically to Claude Desktop.
+
+### Other MCP clients (Cursor, Cline, etc.)
+
+Any client that supports stdio MCP servers will work with the same shape: a
+command and an args list. **HTTP transport** is planned for Phase 8
+([`INITIAL.md`](INITIAL.md)) and will enable remote clients (ChatGPT
+Connectors, web-based MCP clients) without changing the stdio path.
 
 ### Example Interactions
 
@@ -276,13 +312,23 @@ For each `oauth2` API in `api_configs.json`:
    `http://127.0.0.1:8765/callback` exactly. Use `127.0.0.1`, not `localhost` —
    browsers may treat them as different origins for OAuth state tracking.
 2. Copy the resulting **client ID** and **client secret** into `.env` under
-   names matching your `api_configs.json` placeholders (e.g.
-   `EXAMPLE_REST_CLIENT_ID` / `EXAMPLE_REST_CLIENT_SECRET`).
-3. The first time Claude calls a tool that needs auth, the server opens your
-   browser at the provider's authorize URL, captures the auth code via the
-   one-shot localhost callback server, exchanges it for tokens, and stores them
-   in your OS keyring. Subsequent runs reuse the stored token; the gateway
-   auto-refreshes when ≤ 5 minutes remain.
+   names matching your `api_configs.json` placeholders. By convention:
+   `${API_ID_UPPER}_CLIENT_ID` and `${API_ID_UPPER}_CLIENT_SECRET` — e.g.
+   `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` for `api_id="github"`.
+3. **Run the operator login helper once per provider:**
+   ```bash
+   python -m scripts.oauth_login github            # initial login
+   python -m scripts.oauth_login github --clear    # delete + re-auth
+   ```
+   The script opens your browser at the provider's authorize URL, captures
+   the auth code via the one-shot `127.0.0.1` callback server, exchanges it
+   for tokens, and stores them in your OS keyring. Subsequent runs reuse the
+   stored token; the gateway auto-refreshes when ≤ 5 minutes remain.
+
+> **Why a separate script?** MCP tools (`fetch_data`, `send_data`,
+> `execute_graphql`) intentionally **do not** auto-trigger the browser flow —
+> they return `AUTH_REQUIRED` so the client (Claude / Codex / etc.) can
+> surface it cleanly. The login script is the operator-side counterpart.
 
 If the default port `8765` is in use on your machine, set
 `OAUTH_CALLBACK_PORT=<free-port>` in `.env` *and* update the redirect URI you
@@ -387,10 +433,12 @@ directly.
 | 5 | Tools & Integration | ✅ done — `fetch_data`/`send_data`/`execute_graphql`/`get_status`, `auth.type` branching (oauth2/bearer/api_key/null), Recorder triple per call, secret redaction in insight events, 37 tests |
 | 6 | Testing & Polish | ✅ done — subprocess smoke test, example-config schema-drift guard, README expanded with Quickstart / OAuth / Keyring per OS / Troubleshooting / Logging |
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
+| Post-v0 | GitHub OAuth integration | ✅ done — `scripts/oauth_login.py` operator CLI, real GitHub OAuth flow, verified on Claude Desktop **and** Codex CLI, 15 new tests (247 total) |
+| **8** | **HTTP Transport** | 🚧 planned — `MCP_TRANSPORT={stdio,http}` switch, Streamable HTTP, Bearer-token middleware, single-tenant. Delta in [`INITIAL.md`](INITIAL.md) |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
-Future scalability ideas (web UI, multi-tenant, caching, etc.) live in
-[`docs/plan.md` § Future Scalability](docs/plan.md).
+Future scalability ideas (web UI, multi-tenant, caching, additional transports,
+public-deploy recipes) live in [`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Security
 
@@ -407,8 +455,9 @@ TBD
 
 ## Contributing
 
-The original v0 plan is closed. To propose a new feature, edit `INITIAL.md` with a
-delta description and run `/generate-prp INITIAL.md` — see the
-[Development Workflow](#development-workflow) section. For bug fixes and small
-edits, open a PR directly. Contribution guidelines (style, commit format,
+v0 (Phases 1–7) is shipped and the GitHub OAuth integration is wired up. The
+active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md);
+implementation goes through `/generate-prp INITIAL.md` → `/execute-prp PRPs/{...}.md`
+(see the [Development Workflow](#development-workflow) section). For bug fixes and
+small edits, open a PR directly. Contribution guidelines (style, commit format,
 review process) will be formalized as the project gains contributors.

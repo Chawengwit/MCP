@@ -3,7 +3,12 @@
 > **Workflow.** This file is the high-level roadmap (what to build, in what order). For
 > the implementation workflow itself — Context Engineering with `/generate-prp` and
 > `/execute-prp` — see [`CLAUDE.md` § Context Engineering Workflow](../CLAUDE.md). New
-> features for Phases 2–6 start by writing a delta in [`INITIAL.md`](../INITIAL.md).
+> features start by writing a delta in [`INITIAL.md`](../INITIAL.md).
+>
+> **Status (2026-05-08):** Phases 1–7 shipped + GitHub OAuth integration shipped
+> (`scripts/oauth_login.py`). **247 tests passing.** Verified end-to-end against Claude
+> Desktop and OpenAI Codex CLI over stdio. Phase 8 (HTTP transport) is the active
+> delta — see [`INITIAL.md`](../INITIAL.md).
 
 ## Context
 Building a Python-based **Model Context Protocol (MCP) server** that acts as a data gateway, enabling Claude to send/receive data from various external APIs via a unified interface. The system features OAuth 2.0 authentication and supports generic REST/GraphQL API integration, with a foundation for future evolution into a standalone MCP App.
@@ -24,10 +29,11 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 - Manage lifecycle (startup, shutdown, resource cleanup)
 
 ### 2. Authentication Module (`src/auth/`)
-- **oauth.py**: OAuth 2.0 flow handler with automatic popup
+- **oauth.py**: OAuth 2.0 + PKCE flow handler
   - Support multiple OAuth providers (Google, GitHub, custom endpoints)
-  - Automatic browser popup on first tool invocation requiring auth
-  - Local HTTP server to handle OAuth callback
+  - Browser-based authorization code flow with `127.0.0.1` callback server
+  - Driven by the `scripts/oauth_login.py` operator CLI (one-time per provider);
+    MCP tools surface `AUTH_REQUIRED` rather than auto-opening the browser
   - Token generation, refresh, and storage
   - Authorization code exchange
 - **credentials.py**: Secure credential management
@@ -56,12 +62,12 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 
 ### 5. MCP Tools (`src/tools/`)
 - **mcp_tools.py**: Define MCP tools that Claude can use
-  - `send_data`: POST/PUT data to external APIs (triggers OAuth popup if needed)
-  - `fetch_data`: GET data from external APIs with filtering (triggers OAuth popup if needed)
-  - `execute_graphql`: Execute GraphQL queries/mutations (triggers OAuth popup if needed)
+  - `send_data`: POST/PUT data to external APIs (returns `AUTH_REQUIRED` if no token)
+  - `fetch_data`: GET data from external APIs with filtering (returns `AUTH_REQUIRED` if no token)
+  - `execute_graphql`: Execute GraphQL queries/mutations (returns `AUTH_REQUIRED` if no token)
   - `list_apis`: Show available API configurations
   - `get_status`: Check authentication and API connection status
-  - Auto-authentication: tools check for valid credentials, trigger OAuth popup if missing/expired
+  - Auth resolution: tools check for valid credentials, refresh silently when ≤ 5 min from expiry, otherwise return `AUTH_REQUIRED` so the operator can run `scripts/oauth_login.py`
 
 ### 6. Configuration System
 - `.env` / `.env.example`: Environment variables for credentials, OAuth, logging, response limits
@@ -120,7 +126,7 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 1. ✓ Remaining MCP tools shipped — `fetch_data`, `send_data`, `execute_graphql`, `get_status` (`list_apis` was Phase 2)
 2. ✓ Standard response shape from CLAUDE.md observed everywhere; error responses are `{error: ...}` only with no top-level `metadata` sibling
 3. ✓ Large-response handling delegated to Phase 4's `normalize_*_response` (truncate + metadata; binary/streaming → `RESPONSE_TOO_LARGE`)
-4. ✓ Auto-authentication via `src/tools/auth_resolver.py` — branches on `auth.type` ∈ {`oauth2`, `bearer`, `api_key`, `None`}; `KNOWN_AUTH_TYPES` constant prevents drift between `resolve_auth_headers` (request path) and `peek_auth_state` (read-only `get_status`)
+4. ✓ Auth header resolution via `src/tools/auth_resolver.py` — branches on `auth.type` ∈ {`oauth2`, `bearer`, `api_key`, `None`}; `KNOWN_AUTH_TYPES` constant prevents drift between `resolve_auth_headers` (request path) and `peek_auth_state` (read-only `get_status`). Tools never auto-trigger an OAuth browser flow — they raise `AuthRequiredError`, which `mcp_tools.py` surfaces as the `AUTH_REQUIRED` error response.
 5. ✓ `Recorder` triple in `try/finally` per tool — `record_audit` + `record_usage` + `record_insight` fire on every code path; `tool_args` runs through `redact_body` before insight emission
 6. ✓ `get_status` uses `Credentials.peek()` exclusively — never refreshes, never opens a browser; tested with `OAuth.start_flow` spy
 7. ✓ `ApiAuthConfig.client_secret` field added to support OAuth refresh; `_build_oauth_configs` skips with warning when required fields are missing instead of silently constructing a broken config
@@ -133,14 +139,41 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
 5. ✓ README expanded — Quickstart (5-step verbatim), Configuring an API, OAuth Setup, Keyring per OS table, Troubleshooting (9 symptom→cause→fix rows), Logging (operator-only)
 6. ✓ `MCP_API_CONFIG_PATH` env var added — operator override for the API config file path; also enables test isolation
 
-### Phase 7: Activity Logging (`src/events/`)
-1. Pydantic schemas for four event categories: `audit`, `debug`, `usage`, `insight`
-2. Centralized redaction helper (headers, body keys, URL query params)
-3. Async JSONL writer with buffered queue and per-month file rotation
-4. Retention cleanup (delete files older than `MCP_LOG_RETENTION_DAYS`, never the current month)
-5. Public `Recorder` API integrated by tools, gateway, and auth modules
-6. Per-API payload depth controls in `config/api_configs.json` (`metadata`/`summary`/`full`)
-7. Logs are operator-only — **not** exposed via any MCP tool
+### Phase 7: Activity Logging (`src/events/`) ✓ (complete)
+1. ✓ Pydantic schemas for four event categories: `audit`, `debug`, `usage`, `insight`
+2. ✓ Centralized redaction helper (headers, body keys, URL query params)
+3. ✓ Async JSONL writer with buffered queue and per-month file rotation
+4. ✓ Retention cleanup (delete files older than `MCP_LOG_RETENTION_DAYS`, never the current month)
+5. ✓ Public `Recorder` API integrated by tools, gateway, and auth modules
+6. ✓ Per-API payload depth controls in `config/api_configs.json` (`metadata`/`summary`/`full`)
+7. ✓ Logs are operator-only — **not** exposed via any MCP tool
+
+### Post-v0 — GitHub OAuth integration ✓ (complete, committed `82f8165`)
+1. ✓ `scripts/oauth_login.py` — operator CLI to drive OAuth 2.0 + PKCE flow and persist
+   the token in keyring (works around the design choice that MCP tools surface
+   `AUTH_REQUIRED` rather than auto-opening the browser themselves)
+2. ✓ `config/api_configs.json` — first real API entry (GitHub) with `read:user` /
+   `public_repo` scopes and `email` / `notification_email` PII redaction
+3. ✓ `src/server.py` loads `.env` at startup so `${VAR}` placeholders resolve when
+   spawned by Claude Desktop or Codex CLI from a foreign cwd
+4. ✓ Verified end-to-end on Claude Desktop **and** OpenAI Codex CLI (both stdio)
+5. ✓ `.env.example` documents the per-provider credential pattern
+6. ✓ 15 new tests (5 helper unit + 10 CLI integration); test count: 232 → **247**
+
+### Phase 8: HTTP Transport (planned — DELTA in `INITIAL.md`)
+1. Add a `MCP_TRANSPORT={stdio,http}` switch; stdio remains default
+2. New `src/transport/` package — extract stdio bootstrap into `transport/stdio.py`,
+   add `transport/http.py` with Streamable HTTP via `mcp.server.streamable_http_manager`
+3. Bearer-token auth middleware (`MCP_HTTP_BEARER_TOKEN`); fail-loud refuse-to-start
+   when bound non-loopback without a token configured
+4. New env vars: `MCP_HTTP_HOST` (default `127.0.0.1`), `MCP_HTTP_PORT` (default `8080`)
+5. New deps: `uvicorn` + `starlette` (runtime, used by upstream SDK examples)
+6. Tests under `tests/transport/` — selection, auth, round-trip via ASGI test client
+7. Out of scope: WebSocket, legacy SSE, multi-tenant token isolation, public-deploy recipes
+
+See [`INITIAL.md`](../INITIAL.md) for the full feature delta with edge cases and
+expected deliverables. Implementation goes through `/generate-prp INITIAL.md` →
+`/execute-prp PRPs/{...}.md` per the Context Engineering workflow in CLAUDE.md.
 
 ## Critical Files (status)
 - `src/server.py` — MCP server entry point ✓ **implemented**
@@ -175,8 +208,9 @@ See [`README.md` § Tech Stack](../README.md). Source of truth for runtime versi
 3. **Manual testing**:
    - Start MCP server (`python -m src.server`)
    - Configure a sample API in `config/api_configs.json`
-   - Invoke `fetch_data` from Claude → verify OAuth popup opens
-   - Verify token persists in keyring; second call skips popup
+   - Invoke `fetch_data` from Claude → verify it returns `AUTH_REQUIRED` cleanly
+   - Run `python -m scripts.oauth_login <api_id>` → browser flow + token in keyring
+   - Re-invoke `fetch_data` → second call succeeds without re-auth
    - Verify large responses truncate with metadata
    - Verify GraphQL partial-success responses surface both data and errors
 4. **Security validation**:
@@ -188,4 +222,10 @@ See [`README.md` § Tech Stack](../README.md). Source of truth for runtime versi
 - **MCP App evolution** — extract this into a backend behind a web frontend
 - **Persistent storage** — SQLite/Postgres for data history and audit logs
 - **Advanced features** — rate limiting, response caching, transformation pipelines
-- **Multi-tenant** — separate credential stores per user
+- **Multi-tenant** — separate credential stores per user (not addressed by Phase 8;
+  Phase 8 ships single-tenant HTTP only)
+- **Additional transports** — WebSocket (real-time bidirectional), legacy SSE
+  (only if needed for backward compat). Both are deferred until concrete client
+  demand exists.
+- **Public-deploy recipes** — Dockerfile, systemd / launchd unit files,
+  reverse-proxy / TLS setup. Doc-only follow-up after Phase 8.
