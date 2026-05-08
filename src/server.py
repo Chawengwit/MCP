@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+# Project root = parent of src/. Ensure imports and relative paths work
+# regardless of how the server is launched (e.g. by Claude Desktop from /).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+os.chdir(_PROJECT_ROOT)
+
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
