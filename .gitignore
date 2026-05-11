@@ -46,6 +46,12 @@ Thumbs.db
 logs/
 !docs/logs/  # placeholder if docs ever needs a logs subdirectory
 
+# Phase 9 — OAuth Provider local SQLite store (per-user encrypted sessions)
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Local Claude Code workspace state (keep CLAUDE.md and .claude/commands/ committed)
 .claude/local/
 .claude/worktrees/

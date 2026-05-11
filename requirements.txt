@@ -21,4 +21,7 @@ python-dotenv>=1.0.0
 uvicorn>=0.30
 starlette>=0.40
 
+# OAuth Provider (Phase 9) — Fernet symmetric encryption for at-rest api_key/secret_key.
+cryptography>=43.0
+
 # Note: `webbrowser` is part of Python's standard library — no install needed.

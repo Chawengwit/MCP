@@ -341,7 +341,47 @@ talks server-to-server, so no CORS configuration is needed.
 **Loopback safety guard.** The server **refuses to start** if `MCP_HTTP_HOST`
 is non-loopback (`0.0.0.0`, public IP, etc.) and `MCP_HTTP_BEARER_TOKEN` is
 unset or empty — preventing accidental unauthenticated public binds. Set the
-token, or bind to `127.0.0.1`.
+token, bind to `127.0.0.1`, or enable the OAuth Provider (see below).
+
+### OAuth Provider — Claude.ai "Add custom connector" (Phase 9)
+
+When `MCP_OAUTH_ENCRYPTION_KEY` is set, the HTTP transport additionally exposes
+an OAuth 2.0 Authorization Server so Claude.ai (and any MCP client that speaks
+OAuth 2.1 + RFC 9728) can connect.
+
+```bash
+# 1. Generate a Fernet key once and add it to .env. Rotating it later invalidates
+#    every stored Service API session — keep it stable.
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# 2. Configure the Service API entry in config/api_configs.json with
+#    auth.type=session_login. See config/api_configs.example.json for the shape.
+
+# 3. Start the server with OAuth Provider on (loopback or ngrok-tunnelled HTTPS).
+MCP_TRANSPORT=http \
+MCP_OAUTH_ENCRYPTION_KEY=<paste fernet key> \
+MCP_OAUTH_ISSUER=https://<your-ngrok-host>.ngrok-free.app \
+python -m src.server
+
+# 4. In Claude.ai, "Add custom connector" → paste the issuer URL.
+#    Claude.ai will discover /.well-known/oauth-authorization-server,
+#    POST /register, then redirect users to /authorize. Each user pastes
+#    their Service API api_key + secret_key into the consent form;
+#    the encrypted session is stored under their Service API user_id.
+```
+
+Operator inspection (no plaintext output):
+
+```bash
+python -m scripts.oauth_admin list-clients
+python -m scripts.oauth_admin list-tokens
+python -m scripts.oauth_admin list-sessions
+python -m scripts.oauth_admin revoke-token --token <full opaque token>
+```
+
+The Phase 8 static-bearer path is unchanged when the OAuth Provider is on; both
+auth methods are accepted at `/mcp`. OAuth tokens carry a `user_id` into
+audit/usage/insight logs, static-bearer tokens carry `user_id=null`.
 
 ### Example Interactions
 

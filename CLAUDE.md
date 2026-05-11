@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Data Gateway** — a Python-based Model Context Protocol (MCP) server that acts as a unified gateway to multiple external APIs. It provides Claude with tools to fetch and send data across REST and GraphQL endpoints, handling OAuth 2.0 authentication transparently.
 
-Phases 1–8 are implemented and tested (**288 passing unit + integration tests**):
+Phases 1–9 are implemented and tested (**381 passing unit + integration tests**):
 
 - **Phase 1** — project setup
 - **Phase 2** — core MCP server (`src/server.py`), config loader (`src/config.py`), tool registry (`src/tools/`)
@@ -17,6 +17,7 @@ Phases 1–8 are implemented and tested (**288 passing unit + integration tests*
 - **Phase 7** — activity logging subsystem (`src/events/`)
 - **Post-v0** — GitHub OAuth integration shipped (`scripts/oauth_login.py`, `config/api_configs.json`); verified end-to-end on Claude Desktop and OpenAI Codex CLI (both stdio).
 - **Phase 8** — HTTP transport (`src/transport/`): Streamable HTTP via uvicorn + Starlette, Bearer-token middleware, loopback-bind-without-token guard. Selectable via `MCP_TRANSPORT={stdio,http}` env var; stdio remains the default.
+- **Phase 9** — OAuth Provider (`src/oauth_provider/`): turns the HTTP transport into a standards-compliant OAuth 2.0 Authorization Server so Claude.ai's "Add custom connector" flow can register, run authorization-code-with-PKCE, and obtain per-user access tokens. Encrypted Service API sessions in SQLite (`data/oauth_provider.db`).
 
 Future work (multi-tenant, public-deploy recipes, additional transports) lives in [`docs/plan.md` § Future Scalability](docs/plan.md).
 
@@ -55,11 +56,37 @@ What this file pins:
 
 **HTTP-mode invariants** (enforced in code):
 - Loopback binds (`127.0.0.1`, `::1`, `localhost`) are allowed without `MCP_HTTP_BEARER_TOKEN`.
-- Any other host **without** a bearer token → fail-loud `LoopbackGuardError` at startup.
+- Any other host **without** a bearer token → fail-loud `LoopbackGuardError` at startup, *unless the OAuth Provider is enabled* (Phase 9; see below).
 - Bearer comparison uses `secrets.compare_digest` on equal-length bytes; length mismatch short-circuits to `401`.
 - Bearer middleware is a **pure-ASGI** callable (NOT `BaseHTTPMiddleware`) — `BaseHTTPMiddleware` buffers responses and would break the SSE streams Streamable HTTP can return.
 - `uvicorn` owns SIGINT/SIGTERM; the stdio branch keeps the existing `loop.add_signal_handler` setup. Don't double-install.
 - All logs stay on **stderr** in both transports (uvicorn `log_config=None`, `access_log=False`). The stdout reservation isn't strictly needed in HTTP mode, but keeping the discipline avoids future transport-toggle surprises.
+
+#### OAuth Provider mode (Phase 9)
+
+Setting `MCP_OAUTH_ENCRYPTION_KEY` turns the HTTP transport into a standards-compliant
+OAuth 2.0 Authorization Server so Claude.ai's "Add custom connector" flow can register
+and obtain per-user tokens. Implementation lives in `src/oauth_provider/`.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 AS metadata |
+| `GET /.well-known/oauth-protected-resource` | RFC 9728 PRM metadata (referenced by 401 `WWW-Authenticate`) |
+| `POST /register` | RFC 7591 Dynamic Client Registration (public clients only) |
+| `GET /authorize` | Consent form (HTML, no JS) |
+| `POST /authorize/consent` | Drives the Service API `session_login`, issues a single-use authorization code |
+| `POST /token` | `authorization_code` + `refresh_token` grants (PKCE S256 required) |
+
+Phase 9 invariants:
+- Loopback-guard relaxation: when `MCP_OAUTH_ENCRYPTION_KEY` is set, a public bind is allowed without `MCP_HTTP_BEARER_TOKEN` — per-user OAuth tokens replace the static-token requirement.
+- Bearer middleware (`src/oauth_provider/middleware.py`) resolves OAuth tokens via `OAuthStore` first, then falls back to the Phase 8 static-bearer compare. 401 responses always include `WWW-Authenticate: Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource", error="invalid_token"`.
+- All credential material (`api_key`, `secret_key`) is Fernet-encrypted at rest. SQLite lives at `data/oauth_provider.db` by default (override with `MCP_OAUTH_DB_PATH`); `journal_mode=WAL` + per-call fresh connections inside `asyncio.to_thread`.
+- Per-`user_id` `asyncio.Lock` in `ServiceSessionStore` mirrors `src/auth/credentials.py:113-122` verbatim — no `await` between dict-get/dict-set on the lock map.
+- Authorization codes are single-use; `consume_authorization_code` deletes the row in the same transaction it returns it. PKCE method is `S256` only (`plain` is rejected with `invalid_request`).
+- Service API plaintext credentials never reach the disk: they live in memory inside the consent POST handler only, then get Fernet-encrypted via `Encryptor.from_env()` before insertion.
+- Every new sensitive field name is added to `DEFAULT_BODY_KEYS` in `src/events/redaction.py` (`session_id`, `secret_key`, `mcp_access_token`, `code_verifier`, `authorization_code`, `encrypted_api_key`, `encrypted_secret_key`) — do not reimplement redaction in OAuth handlers.
+
+Operator tooling: `python -m scripts.oauth_admin {list-clients,list-tokens,revoke-token,list-sessions}`. Tokens and session IDs are masked in CLI output.
 
 ### Key Design Decisions
 - **Generic-first**: No hard-coded API integrations. All APIs configured via `config/api_configs.json`.
@@ -318,7 +345,7 @@ loop is:
 ruff check src/ scripts/ tests/ --fix
 ruff format src/ scripts/ tests/
 mypy src/ scripts/ tests/
-pytest tests/ -v          # baseline 288 passing; new features add to that count
+pytest tests/ -v          # baseline 381 passing; new features add to that count
 ```
 
 ### When to Use

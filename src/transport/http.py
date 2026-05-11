@@ -32,7 +32,7 @@ import contextlib
 import os
 import secrets
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import uvicorn
 from mcp.server import Server
@@ -59,18 +59,25 @@ class LoopbackGuardError(RuntimeError):
     """
 
 
-def check_loopback_guard(host: str, token: str) -> None:
+def check_loopback_guard(host: str, token: str, *, oauth_enabled: bool = False) -> None:
     """Refuse non-loopback bind without a bearer token.
 
     A loopback bind (`127.0.0.1`, `::1`, `localhost`) without a token is
     permitted — that's the dev/test path and the kernel already prevents
     remote access. Any other host without a token raises.
+
+    Phase 9: when the OAuth Provider is enabled (``oauth_enabled=True``),
+    per-user OAuth tokens replace the static-token requirement, so a
+    public bind without ``MCP_HTTP_BEARER_TOKEN`` is acceptable.
+    ``MCP_OAUTH_ENCRYPTION_KEY`` (checked by the caller via
+    ``is_oauth_provider_enabled``) is the canonical "OAuth is on" signal.
     """
-    if host in LOOPBACK_HOSTS or token:
+    if host in LOOPBACK_HOSTS or token or oauth_enabled:
         return
     raise LoopbackGuardError(
         f"Refusing to bind {host!r} without MCP_HTTP_BEARER_TOKEN. "
-        "Set the bearer token, or bind to 127.0.0.1."
+        "Set the bearer token, enable the OAuth Provider "
+        "(set MCP_OAUTH_ENCRYPTION_KEY), or bind to 127.0.0.1."
     )
 
 
@@ -139,7 +146,14 @@ async def _send_simple(send: Send, status: int, body: bytes) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def build_app(server: Server, expected_token: str, *, json_response: bool = False) -> ASGIApp:
+def build_app(
+    server: Server,
+    expected_token: str,
+    *,
+    json_response: bool = False,
+    oauth_dispatcher: Callable[[Scope, Receive, Send], Awaitable[bool]] | None = None,
+    oauth_middleware: Callable[[ASGIApp], ASGIApp] | None = None,
+) -> ASGIApp:
     """Build the ASGI app: lifespan-aware path dispatcher + Bearer middleware.
 
     The Streamable HTTP manager exposes a pure-ASGI `handle_request(scope,
@@ -158,7 +172,7 @@ def build_app(server: Server, expected_token: str, *, json_response: bool = Fals
     response (no SSE streaming). This is the easier path for clients that
     don't speak SSE; tests use it to keep TestClient interactions simple.
     """
-    if not expected_token:
+    if not expected_token and oauth_middleware is None:
         # Defense for third-party callers who import build_app directly (the
         # run_http loopback guard wouldn't run on that path).
         print(
@@ -181,6 +195,13 @@ def build_app(server: Server, expected_token: str, *, json_response: bool = Fals
     async def dispatcher(scope: Scope, receive: Receive, send: Send) -> None:
         scope_type = scope["type"]
         if scope_type == "http":
+            # Phase 9: OAuth Provider dispatcher gets first crack at HTTP
+            # requests (its paths — /authorize, /token, /register,
+            # /.well-known/* — never reach the MCP manager).
+            if oauth_dispatcher is not None:
+                handled = await oauth_dispatcher(scope, receive, send)
+                if handled:
+                    return
             if scope.get("path") == MCP_PATH:
                 await manager.handle_request(scope, receive, send)
                 return
@@ -190,6 +211,11 @@ def build_app(server: Server, expected_token: str, *, json_response: bool = Fals
         # `manager.run()` enters/exits with the server lifecycle.
         await lifespan_app(scope, receive, send)
 
+    if oauth_middleware is not None:
+        # Phase 9: the OAuth-aware middleware wraps the dispatcher and
+        # replaces the static-bearer one. It already accepts both the
+        # OAuth tokens and (if present) the static fallback token.
+        return oauth_middleware(dispatcher)
     return bearer_auth_middleware(dispatcher, expected_token)
 
 
@@ -222,6 +248,8 @@ async def run_http(
     host: str | None = None,
     port: int | None = None,
     token: str | None = None,
+    oauth_dispatcher: Callable[[Scope, Receive, Send], Awaitable[bool]] | None = None,
+    oauth_middleware: Callable[[ASGIApp], ASGIApp] | None = None,
 ) -> None:
     """Serve `server` over Streamable HTTP on `host:port`.
 
@@ -257,9 +285,15 @@ async def run_http(
         port = env_port if port is None else port
         token = env_token if token is None else token
 
-    check_loopback_guard(host, token)
+    oauth_enabled = oauth_dispatcher is not None or oauth_middleware is not None
+    check_loopback_guard(host, token, oauth_enabled=oauth_enabled)
 
-    app = build_app(server, token)
+    app = build_app(
+        server,
+        token,
+        oauth_dispatcher=oauth_dispatcher,
+        oauth_middleware=oauth_middleware,
+    )
     config = uvicorn.Config(
         app,
         host=host,

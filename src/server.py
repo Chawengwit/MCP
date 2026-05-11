@@ -32,9 +32,19 @@ from mcp.server import Server  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from src.auth import Credentials, OAuth, OAuthConfig  # noqa: E402
+from src.auth.service_api import authenticate as service_api_authenticate  # noqa: E402
 from src.config import ApiConfig, load_api_configs  # noqa: E402
 from src.events import Recorder  # noqa: E402
 from src.gateway import GraphQLClient, RestClient  # noqa: E402
+from src.oauth_provider import (  # noqa: E402
+    Encryptor,
+    OAuthStore,
+    ServiceSessionStore,
+    is_oauth_provider_enabled,
+)
+from src.oauth_provider.discovery import resolve_issuer  # noqa: E402
+from src.oauth_provider.middleware import oauth_aware_bearer_middleware  # noqa: E402
+from src.oauth_provider.routes import build_oauth_dispatcher  # noqa: E402
 from src.tools import (  # noqa: E402
     FetchDataInput,
     GetStatusInput,
@@ -291,7 +301,7 @@ async def main() -> None:
         if transport == "stdio":
             await _serve_stdio(server)
         else:  # transport == "http"
-            await _serve_http(server)
+            await _serve_http(server, api_configs)
     finally:
         await recorder.stop()
         _log("MCP server stopped")
@@ -318,24 +328,117 @@ async def _serve_stdio(server: Server) -> None:
     await run_stdio(server, shutdown_event)
 
 
-async def _serve_http(server: Server) -> None:
+async def _serve_http(server: Server, api_configs: dict[str, ApiConfig]) -> None:
     """Run the server over Streamable HTTP. uvicorn owns SIGINT/SIGTERM.
 
     Resolves settings here (single env read) so the banner can include the
     bound address before `run_http` enters the uvicorn serve loop. Both the
     port-validation `ValueError` and the public-bind `LoopbackGuardError`
     exit through the same fail-loud path.
+
+    When ``MCP_OAUTH_ENCRYPTION_KEY`` is set the OAuth Provider surface
+    is composed on top of the MCP dispatcher — discovery / register /
+    authorize / token become routable and the Bearer middleware accepts
+    both per-user OAuth tokens and the legacy static token.
     """
     try:
         host, port, token = resolve_http_settings()
-        _log(
-            f"HTTP transport listening on http://{host}:{port}/mcp "
-            f"(bearer={'set' if token else 'NOT set — loopback only'})"
-        )
-        await run_http(server, host=host, port=port, token=token)
+        oauth_components = await _maybe_build_oauth_components(api_configs)
+        oauth_enabled = oauth_components is not None
+        bearer_label = "set"
+        if not token:
+            bearer_label = "OAuth Provider" if oauth_enabled else "NOT set — loopback only"
+        _log(f"HTTP transport listening on http://{host}:{port}/mcp (bearer={bearer_label})")
+        if oauth_components is not None:
+            dispatcher, middleware = oauth_components
+            await run_http(
+                server,
+                host=host,
+                port=port,
+                token=token,
+                oauth_dispatcher=dispatcher,
+                oauth_middleware=middleware,
+            )
+        else:
+            await run_http(server, host=host, port=port, token=token)
     except (ValueError, LoopbackGuardError) as exc:
         _log_error(str(exc))
         sys.exit(1)
+
+
+async def _maybe_build_oauth_components(
+    api_configs: dict[str, ApiConfig],
+) -> tuple[Any, Any] | None:
+    """Build the OAuth dispatcher + middleware pair, or return None.
+
+    Returns ``None`` when ``MCP_OAUTH_ENCRYPTION_KEY`` is unset (i.e. the
+    OAuth Provider is disabled). Failures while building the components
+    raise — the operator wants a fail-loud signal that their config is
+    broken rather than a silent fallback to static-bearer.
+    """
+    if not is_oauth_provider_enabled():
+        return None
+
+    # Pick the first session_login API as the "primary Service API" for the
+    # consent flow. Phase 9 supports one Service API per server; multi-API
+    # support is future work and would require extending the consent form
+    # to pick which API to log in to.
+    #
+    # If no session_login API is configured we still mount the discovery /
+    # register / token endpoints — consent will fail with a clear error
+    # when attempted, but discovery probing keeps working (useful for
+    # smoke tests, MCP Inspector exploration, and incremental setup).
+    primary_api: ApiConfig | None = None
+    for cfg in api_configs.values():
+        if cfg.auth is not None and (cfg.auth.type or "").lower() == "session_login":
+            primary_api = cfg
+            break
+    if primary_api is None:
+        _log(
+            "Warning: OAuth Provider is enabled but no API has auth.type=session_login. "
+            "Discovery / register / token endpoints will mount, but the consent flow "
+            "will fail until a Service API is configured."
+        )
+        # Construct a placeholder ApiConfig — the consent handler is only
+        # ever invoked if a user POSTs to /authorize/consent, which they
+        # cannot do without a registered client; the placeholder keeps
+        # the rest of the surface working without dragging Optional[ApiConfig]
+        # through the dispatcher signature.
+        from src.config import ApiAuthConfig
+
+        primary_api = ApiConfig(
+            type="rest",
+            base_url="http://127.0.0.1",
+            auth=ApiAuthConfig(type="session_login", login_path="/_unconfigured"),
+        )
+
+    issuer = resolve_issuer()
+    encryptor = Encryptor.from_env()
+    store = OAuthStore.from_env()
+    await store.init_db()
+    service_store = ServiceSessionStore(
+        store=store,
+        encryptor=encryptor,
+        api_config=primary_api,
+        authenticate=service_api_authenticate,
+    )
+
+    dispatcher = build_oauth_dispatcher(
+        store=store,
+        service_session_store=service_store,
+        authenticate=service_api_authenticate,
+        api_config=primary_api,
+        issuer=issuer,
+    )
+
+    static_token = os.getenv("MCP_HTTP_BEARER_TOKEN", "").strip()
+
+    def middleware_factory(app: Any) -> Any:
+        return oauth_aware_bearer_middleware(
+            app, store=store, static_token=static_token, issuer=issuer
+        )
+
+    return dispatcher, middleware_factory
 
 
 def _log(msg: str) -> None:

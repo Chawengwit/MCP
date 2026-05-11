@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Authorize {client_name}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f7;
+    color: #1d1d1f;
+    margin: 0;
+    padding: 2rem 1rem;
+  }}
+  main {{
+    max-width: 28rem;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  }}
+  h1 {{
+    font-size: 1.25rem;
+    margin: 0 0 0.5rem 0;
+  }}
+  p.lede {{
+    color: #515154;
+    font-size: 0.95rem;
+    margin: 0 0 1.5rem 0;
+  }}
+  label {{
+    display: block;
+    font-weight: 500;
+    margin: 1rem 0 0.25rem 0;
+    font-size: 0.9rem;
+  }}
+  input {{
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #d2d2d7;
+    border-radius: 6px;
+    font-size: 1rem;
+  }}
+  input:focus {{
+    outline: none;
+    border-color: #0066cc;
+  }}
+  button {{
+    margin-top: 1.5rem;
+    width: 100%;
+    padding: 0.65rem;
+    border: 0;
+    border-radius: 6px;
+    background: #0066cc;
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+  }}
+  button:hover {{
+    background: #0058b0;
+  }}
+  .scope {{
+    color: #1d1d1f;
+    font-size: 0.85rem;
+    background: #fafafa;
+    border: 1px solid #e5e5ea;
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin: 0.5rem 0 1rem 0;
+  }}
+  .redirect {{
+    color: #6e6e73;
+    font-size: 0.75rem;
+    margin-top: 1rem;
+    word-break: break-all;
+  }}
+  .error {{
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    color: #842029;
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Authorize {client_name}</h1>
+  <p class="lede">
+    Sign in with your Service API credentials. This server will store an
+    encrypted session and grant <strong>{client_name}</strong> access to
+    the MCP gateway on your behalf.
+  </p>
+  {error_block}
+  <form method="post" action="/authorize/consent" autocomplete="off">
+    <input type="hidden" name="client_id" value="{client_id}">
+    <input type="hidden" name="redirect_uri" value="{redirect_uri}">
+    <input type="hidden" name="state" value="{state}">
+    <input type="hidden" name="code_challenge" value="{code_challenge}">
+    <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
+    <input type="hidden" name="response_type" value="code">
+    <label for="api_key">API key</label>
+    <input id="api_key" name="api_key" required>
+    <label for="secret_key">Secret key</label>
+    <input id="secret_key" name="secret_key" type="password" required>
+    <button type="submit">Authorize</button>
+  </form>
+  <p class="redirect">After approval you will be redirected to:<br>{redirect_uri}</p>
+</main>
+</body>
+</html>

@@ -98,6 +98,27 @@ def test_loopback_guard_message_does_not_echo_token_value() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 9: loopback guard relaxation when OAuth Provider is on
+# ---------------------------------------------------------------------------
+
+
+def test_loopback_guard_loopback_no_token_oauth_off_is_ok() -> None:
+    """(a) loopback + no token + OAuth off  → OK"""
+    check_loopback_guard("127.0.0.1", "", oauth_enabled=False)
+
+
+def test_loopback_guard_public_no_token_oauth_off_raises() -> None:
+    """(b) public + no token + OAuth off    → LoopbackGuardError"""
+    with pytest.raises(LoopbackGuardError):
+        check_loopback_guard("0.0.0.0", "", oauth_enabled=False)
+
+
+def test_loopback_guard_public_no_token_oauth_on_is_ok() -> None:
+    """(c) public + no token + OAuth on     → OK (per-user OAuth tokens authenticate)"""
+    check_loopback_guard("0.0.0.0", "", oauth_enabled=True)
+
+
+# ---------------------------------------------------------------------------
 # bearer_auth_middleware (unit tests via TestClient + a minimal app)
 # ---------------------------------------------------------------------------
 
@@ -340,7 +361,14 @@ def _install_run_http_spies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _noop_app(scope: Any, receive: Any, send: Any) -> None:
         pass  # never invoked because uvicorn.Server.serve is mocked
 
-    def _build_app_spy(server: Any, token: str, *, json_response: bool = False) -> Any:
+    def _build_app_spy(
+        server: Any,
+        token: str,
+        *,
+        json_response: bool = False,
+        oauth_dispatcher: Any = None,
+        oauth_middleware: Any = None,
+    ) -> Any:
         captured["seen_tokens"].append(token)
         return _noop_app
 

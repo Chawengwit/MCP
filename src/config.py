@@ -23,6 +23,26 @@ class ApiAuthConfig(BaseModel):
     header_name: str | None = None
     key_env: str | None = None
 
+    # ------------------------------------------------------------------
+    # session_login (Phase 9 — Service API login via api_key + secret_key)
+    # ------------------------------------------------------------------
+    # These are only required when ``type == "session_login"``; left as
+    # Optional here so other auth types keep working without changes.
+    login_path: str | None = None
+    login_method: str | None = None  # default "POST"
+    credentials: dict[str, str] | None = (
+        None  # POST-body template; placeholders {api_key}/{secret_key}
+    )
+    session_id_field: str | None = (
+        None  # dotted-path into the JSON response (e.g. "data.session_id")
+    )
+    session_expire_field: str | None = None
+    user_id_field: str | None = None
+    session_header: str | None = (
+        None  # request header name used to carry session_id to API endpoints
+    )
+    session_format: str | None = None  # template for header value (e.g. "Bearer {session_id}")
+
 
 class EndpointConfig(BaseModel):
     method: str | None = None

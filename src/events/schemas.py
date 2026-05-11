@@ -29,6 +29,7 @@ class _BaseEvent(BaseModel):
 class AuditEvent(_BaseEvent):
     category: Literal[Category.AUDIT] = Category.AUDIT
     session_id: UUID
+    user_id: str | None = None  # Phase 9: per-user identity when OAuth Provider is on
     tool: str
     api: str | None = None
     endpoint: str | None = None
@@ -70,6 +71,7 @@ class DebugEvent(_BaseEvent):
 class UsageEvent(_BaseEvent):
     category: Literal[Category.USAGE] = Category.USAGE
     tool: str
+    user_id: str | None = None  # Phase 9
     api: str | None = None
     endpoint: str | None = None
     status: Literal["success", "error"]
@@ -90,6 +92,7 @@ class ResponseSummary(BaseModel):
 class InsightEvent(_BaseEvent):
     category: Literal[Category.INSIGHT] = Category.INSIGHT
     session_id: UUID
+    user_id: str | None = None  # Phase 9
     tool: str
     api: str | None = None
     tool_args: dict[str, Any] = Field(default_factory=dict)

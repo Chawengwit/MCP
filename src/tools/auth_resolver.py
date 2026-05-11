@@ -5,6 +5,7 @@ import time
 
 from src.auth import AuthRequiredError, Credentials
 from src.config import ApiConfig
+from src.oauth_provider.schemas import SessionInfo
 
 # Authoritative list of auth.type values the gateway handles. Both
 # resolve_auth_headers and peek_auth_state branch on the early
@@ -12,7 +13,7 @@ from src.config import ApiConfig
 # this set but missing a branch in EITHER function will fall through to the
 # raise/return-unknown line below, surfacing the gap immediately rather than
 # silently mis-routing requests.
-KNOWN_AUTH_TYPES: frozenset[str] = frozenset({"oauth2", "bearer", "api_key"})
+KNOWN_AUTH_TYPES: frozenset[str] = frozenset({"oauth2", "bearer", "api_key", "session_login"})
 
 
 class UnknownAuthTypeError(ValueError):
@@ -20,7 +21,11 @@ class UnknownAuthTypeError(ValueError):
 
 
 async def resolve_auth_headers(
-    *, config: ApiConfig, api_id: str, credentials: Credentials
+    *,
+    config: ApiConfig,
+    api_id: str,
+    credentials: Credentials,
+    service_session: SessionInfo | None = None,
 ) -> dict[str, str]:
     """Compute the auth headers for an outbound request based on `config.auth.type`.
 
@@ -62,6 +67,20 @@ async def resolve_auth_headers(
         if not key_value:
             raise AuthRequiredError(f"API key env var '{auth.key_env}' not set for '{api_id}'")
         return {auth.header_name: key_value}
+
+    if auth_type == "session_login":
+        # Phase 9: per-user Service API session. The session is resolved
+        # upstream (by the OAuth-aware middleware → ToolContext) and
+        # threaded in via `service_session`. Without it we cannot speak
+        # to the Service API on behalf of any user.
+        if service_session is None:
+            raise AuthRequiredError(
+                f"Service API session required for '{api_id}'. The OAuth flow must "
+                "complete (POST to /authorize/consent) before tools can call this API."
+            )
+        header_name = auth.session_header or "X-Session-Id"
+        template = auth.session_format or "{session_id}"
+        return {header_name: template.format(session_id=service_session.session_id)}
 
     # Unreachable: KNOWN_AUTH_TYPES check at the top covers all branches.
     raise UnknownAuthTypeError(
@@ -108,6 +127,13 @@ async def peek_auth_state(
         if auth.key_env and os.environ.get(auth.key_env):
             return "authenticated", None
         return "unauthenticated", None
+
+    if auth_type == "session_login":
+        # `peek_auth_state` is read-only and per-API; it has no access
+        # to the request's ToolContext. So the most we can say without
+        # leaking per-user state into get_status is "this API is OAuth-
+        # backed at the transport layer".
+        return "oauth_managed", None
 
     # Unreachable: KNOWN_AUTH_TYPES check at the top covers all branches.
     return "unknown", None

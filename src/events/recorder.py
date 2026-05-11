@@ -74,10 +74,12 @@ class Recorder:
         requires_auth: bool = False,
         auth_method: str | None = None,
         note: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         try:
             event = AuditEvent(
                 session_id=session_id,
+                user_id=user_id,
                 tool=tool,
                 api=api,
                 endpoint=endpoint,
@@ -126,10 +128,12 @@ class Recorder:
         endpoint: str | None = None,
         request_bytes: int = 0,
         response_bytes: int = 0,
+        user_id: str | None = None,
     ) -> None:
         try:
             event = UsageEvent(
                 tool=tool,
+                user_id=user_id,
                 api=api,
                 endpoint=endpoint,
                 status=status,  # type: ignore[arg-type]
@@ -149,10 +153,12 @@ class Recorder:
         tool_args: dict[str, Any],
         api: str | None = None,
         response_summary: ResponseSummary | None = None,
+        user_id: str | None = None,
     ) -> None:
         try:
             event = InsightEvent(
                 session_id=session_id,
+                user_id=user_id,
                 tool=tool,
                 api=api,
                 tool_args=tool_args,

@@ -91,7 +91,10 @@ async def fetch_data(input_: FetchDataInput, *, context: ToolContext) -> dict[st
 
         try:
             headers = await resolve_auth_headers(
-                config=config, api_id=input_.api_id, credentials=context.credentials
+                config=config,
+                api_id=input_.api_id,
+                credentials=context.credentials,
+                service_session=context.service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)
@@ -120,6 +123,7 @@ async def fetch_data(input_: FetchDataInput, *, context: ToolContext) -> dict[st
         await _record_invocation(
             context.recorder,
             session_id=session_id,
+            user_id=context.user_id,
             tool="fetch_data",
             api=input_.api_id,
             endpoint=input_.endpoint,
@@ -154,7 +158,10 @@ async def send_data(input_: SendDataInput, *, context: ToolContext) -> dict[str,
 
         try:
             headers = await resolve_auth_headers(
-                config=config, api_id=input_.api_id, credentials=context.credentials
+                config=config,
+                api_id=input_.api_id,
+                credentials=context.credentials,
+                service_session=context.service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)
@@ -183,6 +190,7 @@ async def send_data(input_: SendDataInput, *, context: ToolContext) -> dict[str,
         await _record_invocation(
             context.recorder,
             session_id=session_id,
+            user_id=context.user_id,
             tool="send_data",
             api=input_.api_id,
             endpoint=input_.endpoint,
@@ -216,7 +224,10 @@ async def execute_graphql(input_: GraphQLInput, *, context: ToolContext) -> dict
 
         try:
             headers = await resolve_auth_headers(
-                config=config, api_id=input_.api_id, credentials=context.credentials
+                config=config,
+                api_id=input_.api_id,
+                credentials=context.credentials,
+                service_session=context.service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)
@@ -244,6 +255,7 @@ async def execute_graphql(input_: GraphQLInput, *, context: ToolContext) -> dict
         await _record_invocation(
             context.recorder,
             session_id=session_id,
+            user_id=context.user_id,
             tool="execute_graphql",
             api=input_.api_id,
             endpoint=None,
@@ -307,6 +319,7 @@ async def get_status(input_: GetStatusInput, *, context: ToolContext) -> dict[st
         await _record_invocation(
             context.recorder,
             session_id=session_id,
+            user_id=context.user_id,
             tool="get_status",
             api=input_.api_id,
             endpoint=None,
@@ -422,6 +435,7 @@ async def _record_invocation(
     result: str,
     duration_ms: int,
     args: dict[str, Any],
+    user_id: str | None = None,
 ) -> None:
     """Emit the audit + usage + insight triple for one tool call.
 
@@ -432,6 +446,7 @@ async def _record_invocation(
     redacted_args = redact_body(args)
     await recorder.record_audit(
         session_id=session_id,
+        user_id=user_id,
         tool=tool,
         api=api,
         endpoint=endpoint,
@@ -440,6 +455,7 @@ async def _record_invocation(
     )
     await recorder.record_usage(
         tool=tool,
+        user_id=user_id,
         api=api,
         endpoint=endpoint,
         status=result,
@@ -447,6 +463,7 @@ async def _record_invocation(
     )
     await recorder.record_insight(
         session_id=session_id,
+        user_id=user_id,
         tool=tool,
         api=api,
         tool_args=redacted_args,

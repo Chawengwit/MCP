@@ -22,6 +22,14 @@ DEFAULT_BODY_KEYS: frozenset[str] = frozenset(
         "api_key",
         "apikey",
         "secret",
+        # Phase 9 — OAuth Provider + Service API session credentials.
+        "secret_key",
+        "session_id",
+        "mcp_access_token",
+        "code_verifier",
+        "authorization_code",
+        "encrypted_api_key",
+        "encrypted_secret_key",
     }
 )
 
