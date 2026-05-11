@@ -1,6 +1,13 @@
 # MCP Data Gateway
 
-> **Status: stdio + HTTP transports live.** All seven planned phases plus the GitHub OAuth integration plus Phase 8 (HTTP transport) are shipped. Selectable via `MCP_TRANSPORT={stdio,http}` (stdio default). Verified against **Claude Desktop**, **OpenAI Codex CLI** (stdio), and the Streamable HTTP test suite. **288 passing tests**. See the [Development Roadmap](#development-roadmap) or [`docs/plan.md`](docs/plan.md).
+> **Status: OAuth Provider live.** Phases 1–9.5 shipped — stdio, HTTP, OAuth 2.0
+> Authorization Server (RFC 8414/7591/7636/9728), per-user multi-tenant sessions,
+> CORS, STDIO keyring auth, and LLM-facing endpoint metadata. Verified end-to-end
+> against **Claude Desktop** (STDIO + natural language) and **MCP Inspector** (HTTP
+> + OAuth dance against a real Service API). **432 passing tests**. Public-deploy
+> recipe (Phase 10) is the next milestone. See [`docs/testing-user-ux.md`](docs/testing-user-ux.md)
+> for the test playbook, the [Development Roadmap](#development-roadmap), or
+> [`docs/plan.md`](docs/plan.md).
 
 A Python-based **Model Context Protocol (MCP) server** that acts as a unified data gateway, enabling Claude (and other MCP clients) to send and receive data across multiple external APIs through a single, secure interface.
 
@@ -536,10 +543,19 @@ directly.
 | 7 | Activity Logging (`src/events/`) | ✅ done — 27 test cases (51 collected with parametrization) |
 | Post-v0 | GitHub OAuth integration | ✅ done — `scripts/oauth_login.py` operator CLI, real GitHub OAuth flow, verified on Claude Desktop **and** Codex CLI, 15 new tests |
 | 8 | HTTP Transport | ✅ done — `MCP_TRANSPORT={stdio,http}` switch, Streamable HTTP via uvicorn + Starlette, Bearer-token middleware, loopback-bind safety guard, per-arg env fallback for `run_http` settings, single-tenant; 41 new tests (38 transport unit + 3 HTTP subprocess smoke) — 288 total |
+| 9 | OAuth Provider (RFC 8414/7591/7636/9728) | ✅ done — `src/oauth_provider/`, encrypted SQLite store, consent HTML form, opaque tokens, per-user `service_session` via contextvar, 93 new tests |
+| 9.1 | Form-encoded login + api_key fingerprint user_id | ✅ done — Taximail-style Service APIs (POST form login, no stable per-user id in response) |
+| 9.2 | Contextvar bridge for per-request session | ✅ done — OAuth middleware publishes user_id; tool handlers fetch the matching Service-API session at call time |
+| 9.3 | CORS middleware + RFC 9728 strict URL | ✅ done — `src/transport/cors.py`, slash-boundary path match, strict-variant protected-resource discovery |
+| 9.4 | Keyring-backed `session_login` for STDIO | ✅ done — `scripts/session_login.py` operator CLI; Claude Desktop natural language reaches Service APIs |
+| 9.5 | LLM-facing endpoint metadata | ✅ done — `description` / `required_params` / `param_hints` surfaced through `list_apis`; LLM picks correct filters on the first try; **432 total tests** |
+| 10 | Production Deploy Recipe | 🔵 next — Dockerfile + Caddy (Let's Encrypt) + VPS guide; unlocks Claude Desktop's "Add custom connector" and Claude.ai web |
 
 Per-phase deliverables and verification plan: [`docs/plan.md`](docs/plan.md).
-Future scalability ideas (web UI, multi-tenant, caching, additional transports,
-public-deploy recipes) live in [`docs/plan.md` § Future Scalability](docs/plan.md).
+Operator playbook for testing both transports end-to-end:
+[`docs/testing-user-ux.md`](docs/testing-user-ux.md). Future scalability
+ideas (multi-tenant, caching, additional transports) live in
+[`docs/plan.md` § Future Scalability](docs/plan.md).
 
 ## Security
 
@@ -556,9 +572,12 @@ TBD
 
 ## Contributing
 
-v0 (Phases 1–7) is shipped and the GitHub OAuth integration is wired up. The
-active feature delta is **Phase 8 — HTTP transport** in [`INITIAL.md`](INITIAL.md);
-implementation goes through `/generate-prp INITIAL.md` → `/execute-prp PRPs/{...}.md`
-(see the [Development Workflow](#development-workflow) section). For bug fixes and
-small edits, open a PR directly. Contribution guidelines (style, commit format,
-review process) will be formalized as the project gains contributors.
+Phases 1–9.5 are shipped — STDIO + HTTP transports, GitHub OAuth, the full
+OAuth Provider (RFC 8414/7591/7636/9728), keyring-backed STDIO session_login,
+CORS, and LLM-facing endpoint metadata are all in `main` with 432 passing
+tests. The active feature delta is **Phase 10 — Production Deploy Recipe**
+(Dockerfile + Caddy + VPS guide) in [`INITIAL.md`](INITIAL.md); implementation
+goes through `/generate-prp INITIAL.md` → `/execute-prp PRPs/{...}.md` (see
+the [Development Workflow](#development-workflow) section). For bug fixes
+and small edits, open a PR directly. Contribution guidelines (style, commit
+format, review process) will be formalized as the project gains contributors.

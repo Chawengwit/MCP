@@ -5,12 +5,13 @@
 > `/execute-prp` — see [`CLAUDE.md` § Context Engineering Workflow](../CLAUDE.md). New
 > features start by writing a delta in [`INITIAL.md`](../INITIAL.md).
 >
-> **Status (2026-05-08):** Phases 1–8 shipped + GitHub OAuth integration shipped.
-> **288 tests passing.** Verified end-to-end against Claude Desktop and OpenAI Codex
-> CLI over stdio, and against the Streamable HTTP test suite (38 transport unit tests
-> + 3 subprocess smoke tests
-> covering Bearer auth, loopback guard, and a full initialize → tools/list round-trip).
-> Selectable via `MCP_TRANSPORT={stdio,http}`; stdio remains the default.
+> **Status (2026-05-11):** Phases 1–9.5 shipped + GitHub OAuth + the full
+> OAuth Provider stack. **432 tests passing.** Verified end-to-end against
+> **Claude Desktop** (STDIO + natural-language flow with GitHub and Taximail)
+> and **MCP Inspector** (HTTP + full RFC 8414/7591/7636 OAuth dance against a
+> live Service API). Selectable via `MCP_TRANSPORT={stdio,http}`; stdio
+> remains the default. Phase 10 (production deploy recipe) is the next
+> milestone — see [`INITIAL.md`](../INITIAL.md).
 
 ## Context
 Building a Python-based **Model Context Protocol (MCP) server** that acts as a data gateway, enabling Claude to send/receive data from various external APIs via a unified interface. The system features OAuth 2.0 authentication and supports generic REST/GraphQL API integration, with a foundation for future evolution into a standalone MCP App.
@@ -189,6 +190,98 @@ Building a Python-based **Model Context Protocol (MCP) server** that acts as a d
    `wait_for_ready`) — used by both stdio and HTTP smoke tests
 9. Out of scope (deferred): WebSocket, legacy SSE, multi-tenant token
    isolation, public-deploy recipes (Dockerfile, systemd, reverse proxy)
+
+### Phase 9: OAuth Provider ✓ (complete)
+
+Standards-compliant OAuth 2.0 Authorization Server so Claude.ai-style clients
+can register, complete a browser-based consent flow, and receive per-user
+tokens that resolve to encrypted Service-API sessions. Full PRP at
+[`PRPs/phase9-oauth-provider.md`](../PRPs/phase9-oauth-provider.md).
+
+1. ✓ Discovery: `/.well-known/oauth-authorization-server` (RFC 8414) +
+   `/.well-known/oauth-protected-resource` (RFC 9728, both legacy and
+   strict variants)
+2. ✓ Dynamic Client Registration (RFC 7591): `POST /register`
+3. ✓ Authorization Code with PKCE S256 (RFC 7636): `GET /authorize`
+   renders an HTML consent form; `POST /authorize/consent` calls the
+   Service API, persists the session encrypted, issues a single-use
+   authorization code
+4. ✓ Token endpoint: `POST /token` supports `authorization_code` and
+   `refresh_token` grants; opaque 64-byte tokens stored in SQLite
+5. ✓ Per-user Service API session: `service_sessions` table with
+   Fernet-encrypted `api_key` / `secret_key`; per-`user_id` `asyncio.Lock`
+   for refresh races (mirror of `src/auth/credentials.py:113-122`)
+6. ✓ OAuth-aware Bearer middleware (pure ASGI, NOT `BaseHTTPMiddleware`)
+   resolves tokens and falls back to the Phase 8 static-bearer path for
+   back-compat
+7. ✓ 401 includes `WWW-Authenticate: Bearer resource_metadata="..."` per
+   the MCP Authorization spec
+8. ✓ Loopback-guard relaxation: when `MCP_OAUTH_ENCRYPTION_KEY` is set,
+   public bind without a static token is permitted (per-user OAuth
+   tokens are the auth)
+9. ✓ Operator CLI: `scripts/oauth_admin.py` (`list-clients`,
+   `list-tokens`, `revoke-token`, `list-sessions`) with sensitive values
+   masked in output
+10. ✓ 93 new tests (`tests/oauth_provider/` + `tests/auth/test_service_api.py`
+    + `tests/integration/test_oauth_full_flow.py`); commit `4b3e976`
+
+### Phase 9.1–9.5: Hardening + UX ✓ (complete)
+
+Iterative improvements driven by real-world testing against Taximail and
+MCP Inspector. Each landed as a direct edit (no separate PRP):
+
+- **9.1 — Form-encoded login + fingerprint user_id** (`9b17bf1`): new
+  `auth.login_content_type = "application/x-www-form-urlencoded"` and
+  `user_id_field = "_api_key_fingerprint"` for Service APIs that don't
+  expose a stable per-user identifier in the login response.
+- **9.2 — Contextvar bridge** (`a108fbd`): `src/oauth_provider/request_context.py`
+  publishes the OAuth middleware's resolved `user_id` to a
+  `contextvars.ContextVar`; tool handlers (deeper in the MCP SDK,
+  beyond ASGI scope) read it via `ensure_service_session`.
+- **9.3 — CORS middleware + RFC 9728 strict URL** (`54ff960`):
+  `src/transport/cors.py` (pure-ASGI, slash-boundary path match,
+  configurable `MCP_CORS_ALLOWED_ORIGINS`); discovery handler accepts
+  both `/.well-known/oauth-protected-resource` and the strict variant
+  `/.well-known/oauth-protected-resource/mcp`.
+- **9.4 — Keyring-backed `session_login` for STDIO** (`9a3f3f4`):
+  `KeyringServiceSessionStore` mirrors the GitHub OAuth (Phase 3)
+  keyring pattern; `scripts/session_login.py` is the operator CLI;
+  natural-language Claude Desktop prompts now reach `session_login`
+  APIs (Taximail, etc.).
+- **9.5 — LLM-facing endpoint metadata** (`770a183`): `description` /
+  `required_params` / `param_hints` fields on `EndpointConfig`,
+  surfaced through `list_apis`; `fetch_data` / `send_data` validate
+  `required_params` before the upstream call. The LLM picks correct
+  filters on the first try instead of probing for missing keys.
+
+### Phase 9.6: Local HTTPS ✗ (reverted)
+
+Added uvicorn TLS support to make Claude Desktop's "Add custom connector"
+dialog accept `https://127.0.0.1:8080/mcp`. Live testing revealed the
+dialog routes the URL through Anthropic's cloud API for validation:
+
+```
+POST /api/organizations/{orgId}/mcp/remote_servers
+400 invalid_request_error
+"url: Localhost URLs cannot be used because our servers cannot reach
+your local machine. Provide a publicly accessible MCP server URL."
+```
+
+Anthropic's backend needs to reach the URL itself, so any private address
+is rejected regardless of scheme or cert validity. The TLS code added
+maintenance surface for zero benefit and was reverted (`12ec7ce`). TLS
+returns at the reverse-proxy layer in Phase 10 — that's the standard
+production shape and matches how Caddy / nginx already handle Let's
+Encrypt for us.
+
+### Phase 10: Production Deploy Recipe (next)
+
+Active feature delta lives in [`INITIAL.md`](../INITIAL.md). Goal:
+operational scaffolding (Dockerfile, docker-compose, Caddy/nginx reverse
+proxy with auto Let's Encrypt, systemd unit, VPS deploy guide) so the
+existing OAuth Provider + Service-API stack can run on a public HTTPS
+endpoint reachable from Anthropic's cloud — which unblocks Claude
+Desktop's "Add custom connector" and Claude.ai web.
 
 ## Critical Files (status)
 - `src/server.py` — MCP server entry point ✓ **implemented**

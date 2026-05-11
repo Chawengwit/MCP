@@ -1,131 +1,118 @@
-# TODO — Resume Phase 8 + Codex Desktop integration
+# TODO — Resume after Phase 9.5
 
-> Snapshot 2026-05-08, end of session. Pick up here.
+> Snapshot 2026-05-11, end of session. Pick up here.
 >
-> See [INITIAL.md](INITIAL.md) for project-level feature tracking.
+> See [`INITIAL.md`](INITIAL.md) for the active feature delta (Phase 10).
 > This file tracks operational state — what's wired up where, what was last
-> verified, and what's left to test.
+> verified, and what's left to do.
 
 ---
 
-## ✅ Done today
+## ✅ Done in this session (Phases 9.0 → 9.5, plus a 9.6 revert)
 
-- Phase 8 (HTTP transport) shipped, committed (`1dafca7`), and pushed to `main`
-- Server boots in HTTP mode end-to-end (`MCP_TRANSPORT=http python -m src.server`)
-- Streamable HTTP wire format verified via `curl` (Phase A: 401 / 200 / 404 + Mcp-Session-Id)
-- **Codex Desktop (macOS app, NOT VSCode extension)** integrated with our HTTP server
-- 4 real tool calls from Codex Desktop landed in `logs/audit/2026-05.jsonl`:
-  - `list_apis` × 2 (success)
-  - `get_status(github)` (success — reported `expired`)
-  - `fetch_data(github, get_user)` (correctly returned `AUTH_REQUIRED` because token expired)
+- **Phase 9.0 — OAuth Provider** (commit `4b3e976`): RFC 8414/7591/7636/9728
+  endpoints, encrypted SQLite store, consent HTML form, opaque tokens, 93 tests.
+- **Phase 9.1 — Form-encoded login + fingerprint user_id** (`9b17bf1`): Taximail
+  compatibility — `application/x-www-form-urlencoded` login bodies and
+  `_api_key_fingerprint` for Service APIs that don't expose a stable user id.
+- **Phase 9.2 — Contextvar bridge** (`a108fbd`): per-request `user_id` →
+  `service_session` wiring so tool handlers reach the right user's Taximail
+  session at call time.
+- **Phase 9.3 — CORS + RFC 9728 strict URL** (`54ff960`): pure-ASGI CORS
+  middleware, slash-boundary path match, strict-variant protected-resource URL.
+- **Phase 9.4 — Keyring-backed session_login** (`9a3f3f4`):
+  `KeyringServiceSessionStore` and `scripts/session_login.py` — Claude Desktop
+  (STDIO) can now hit `session_login` APIs via natural language.
+- **Phase 9.5 — LLM-facing endpoint metadata** (`770a183`): `description` /
+  `required_params` / `param_hints` on `EndpointConfig`, surfaced through
+  `list_apis`. LLM picks correct filters on first try.
+- **Phase 9.6 — Local HTTPS** (`a375230`) added then reverted (`12ec7ce`):
+  uvicorn TLS support didn't help — Claude Desktop's Add Custom Connector
+  routes through Anthropic's cloud, which rejects all localhost URLs
+  regardless of scheme.
+
+**Test count: 432 passing.** All gates clean (`ruff`, `ruff format`, `mypy`,
+`pytest`). Working tree on `main` is in sync with `origin/main`.
+
+---
 
 ## 🔧 Current state of moving parts
 
 | Component | State |
 |-----------|-------|
-| `~/.codex/config.toml` | Has `[mcp_servers.data-gateway-http]` block with `url` + inlined `[mcp_servers.data-gateway-http.http_headers]` `Authorization = "Bearer …"` |
-| Bearer token in Codex config | `1d77a585694dd513bfa2ec4bf06618124f75d5eb1f8f8082b3316c1937fe4a42` (64-char hex) |
-| Background HTTP server | **STOPPED** (was task `b4k3vbftc`, killed via SIGTERM) |
-| GitHub OAuth token in keychain | **EXPIRED** (1h default lifetime; expired ~07:16 UTC, last verified ~11:52 UTC) |
-| stdio transport for Claude Desktop | Still wired up at `~/Library/Application Support/Claude/claude_desktop_config.json` — works untouched |
+| `~/Library/Application Support/Claude/claude_desktop_config.json` | `data-gateway` STDIO entry present and proven working |
+| `~/.codex/config.toml` | `[mcp_servers.data-gateway-http]` block with inlined Bearer token; works against Phase 8 HTTP transport |
+| GitHub OAuth token in keyring | Present (refreshed during this session) |
+| Taximail session in keyring | Cleared at end of session (test reset). Re-run `python -m scripts.session_login taximail` to restore. |
+| SQLite OAuth Provider DB | Cleared (`data/oauth_provider.db` deleted) — recreated on next HTTP+OAuth boot |
+| MCP server subprocesses | None running (verified via `pkill -f src.server`) |
+| Ports 8080 / 6274 / 6277 | All free |
+| mkcert local CA | Installed during Phase 9.6 experiment — harmless to keep, no longer used by this project |
 
-> **Why inlined header instead of `bearer_token_env_var`?**
-> Codex Desktop runs as a Mac app; its process tree doesn't inherit env vars from
-> the shell unless launched from one. The UI's "Bearer token env var" field
-> couldn't see `MCP_HTTP_BEARER_TOKEN` from a generic terminal. Inlining the
-> header in `http_headers` is the workaround that ships the value through Codex
-> Desktop's own config storage.
+---
 
-## 🚀 To resume tomorrow
+## 🚀 Where to pick up next
 
-### Option 1 — Continue HTTP integration (if you want full chain proven)
+### Option A — Start Phase 10 (Production Deploy Recipe)
 
-```bash
-# 1. Re-auth GitHub (the in-keychain token is expired)
-cd /Users/chawengwit/Documents/MCP
-.venv/bin/python -m scripts.oauth_login github --clear
+See [`INITIAL.md`](INITIAL.md) for the full delta. Roughly:
 
-# 2. Start HTTP server in one terminal (keep it running)
-MCP_TRANSPORT=http \
-MCP_HTTP_BEARER_TOKEN=1d77a585694dd513bfa2ec4bf06618124f75d5eb1f8f8082b3316c1937fe4a42 \
-python -m src.server
-```
-
-> NOTE: The bearer token here must match the value already inlined in
-> `~/.codex/config.toml`. If you regenerate the token, update both places.
-
-Then in **Codex Desktop**, ask:
-> *"Fetch my GitHub user profile via data-gateway-http"*
-
-Expect: real GitHub profile (`login: Chawengwit`) returned — this proves the full
-chain Codex → HTTP transport → REST gateway → GitHub API → response.
-
-### Option 2 — Document Codex Desktop setup in README
-
-Codex Desktop's `http_headers` workaround is non-obvious and worth committing as
-a `README.md` recipe so anyone reading the repo can replicate. Suggested location:
-under "HTTP transport" section, a new subsection **"Connecting from Codex Desktop"**.
-
-Outline:
-```markdown
-### Connecting from Codex Desktop (macOS app)
-
-The Codex Desktop app's UI accepts a `bearer_token_env_var`, but env vars set in
-your shell aren't visible to apps launched outside that shell. The cleanest
-workaround is to inline the token as a static header in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.data-gateway-http]
-url = "http://127.0.0.1:8080/mcp"
-
-[mcp_servers.data-gateway-http.http_headers]
-Authorization = "Bearer <your-token>"
-```
-
-After editing, fully quit (Cmd+Q) and relaunch Codex Desktop.
-```
-
-### Option 3 — Rotate the token
-
-The token has been visible in this conversation log. For ongoing dev OK; for
-production, regenerate:
+1. `Dockerfile` + `docker-compose.yml`
+2. `deploy/Caddyfile` (auto Let's Encrypt)
+3. `deploy/systemd/mcp-data-gateway.service` for non-Docker hosts
+4. `docs/deploy.md` — 30-minute VPS walkthrough (DigitalOcean target)
+5. Verify against Claude Desktop's "Add custom connector" — public HTTPS URL should succeed
 
 ```bash
-NEW=$(python -c 'import secrets; print(secrets.token_hex(32))')
-echo "$NEW"
-# update ~/.codex/config.toml http_headers entry
-# restart server with MCP_HTTP_BEARER_TOKEN=$NEW
+/generate-prp INITIAL.md
+# review PRPs/phase10-deploy.md
+/execute-prp PRPs/phase10-deploy.md
 ```
 
-## 🧹 Cleanup if you want to stop using HTTP transport entirely
+### Option B — Add more Service APIs to `config/api_configs.json`
 
-- Comment out or delete the `[mcp_servers.data-gateway-http]` block in
-  `~/.codex/config.toml`
-- The original stdio `[mcp_servers.data-gateway]` entry was removed earlier in
-  the session (no longer present); add it back if you want stdio in Codex
-  Desktop:
+The current config has GitHub (OAuth) and Taximail (session_login). Adding
+more — Notion, Linear, Google Calendar, internal APIs — exercises the
+endpoint-metadata + natural-language flow without writing any new code.
 
-  ```toml
-  [mcp_servers.data-gateway]
-  command = "/Users/chawengwit/Documents/MCP/.venv/bin/python"
-  args = ["/Users/chawengwit/Documents/MCP/src/server.py"]
-  ```
+### Option C — Quality improvements within Phase 9
+
+- Multi-Service-API consent (operator can register more than one `session_login`
+  API; consent form picks which one to log into).
+- Endpoint path parameters (`/v2/list/{list_id}/subscribers` rather than the
+  current hardcoded `35`).
+- Token rotation policy + background sweeper for expired tokens.
+
+### Option D — Polish / docs (this is the small option)
+
+- Expand README's Phase 9 section with the Taximail walkthrough.
+- Add screenshots / GIFs of the consent form.
+- Record a short demo video.
+
+---
 
 ## 📊 Session checkpoints
 
-- Test count: **288 passing** (Phase 8 + cleanup)
-- Last commit: `1dafca7 Add HTTP transport (Phase 8) with operator-driven OAuth model`
-- Branch: `main` (pushed to `origin`)
-- Working tree: clean
+- **Commits this session**: 4b3e976 → 12ec7ce (8 commits, ~7,200 LOC src/, ~7,900 LOC tests/)
+- **Last commit**: `12ec7ce Revert Phase 9.6 (Local HTTPS)`
+- **Branch**: `main` (pushed to `origin`)
+- **Working tree**: clean
+
+---
 
 ## 🔍 Reference (muscle memory)
 
-- Run tests: `pytest tests/ -q` (288 passing)
-- Lint + types: `ruff check src/ scripts/ tests/ && mypy src/ scripts/ tests/`
-- Smoke (stdio): `python -m src.server` then Ctrl-C
-- Smoke (http): `MCP_TRANSPORT=http MCP_HTTP_BEARER_TOKEN=... python -m src.server`
-- OAuth login (operator CLI): `python -m scripts.oauth_login github [--clear]`
+- Run tests: `.venv/bin/python -m pytest tests/ -q` (432 passing)
+- Lint + types: `.venv/bin/python -m ruff check src/ scripts/ tests/ && .venv/bin/python -m mypy src/ scripts/ tests/`
+- Smoke (stdio): `.venv/bin/python -m src.server` then Ctrl-C
+- Smoke (http + OAuth, local): `MCP_TRANSPORT=http MCP_OAUTH_ENCRYPTION_KEY=$(.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") MCP_OAUTH_ISSUER=http://127.0.0.1:8080 .venv/bin/python -m src.server`
+- Smoke (full OAuth dance against Taximail): `.venv/bin/python -m scripts.oauth_smoke_test`
+- OAuth login (GitHub): `.venv/bin/python -m scripts.oauth_login github [--clear]`
+- Session login (Taximail or other session_login API): `.venv/bin/python -m scripts.session_login taximail [--clear]`
+- OAuth admin (clients / tokens / sessions): `.venv/bin/python -m scripts.oauth_admin {list-clients,list-tokens,list-sessions,revoke-token}`
 - Activity logs: `logs/{audit,debug,usage,insight}/YYYY-MM.jsonl`
-- All five tools: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`
+- Test playbook: [`docs/testing-user-ux.md`](docs/testing-user-ux.md)
+- Five MCP tools: `list_apis`, `fetch_data`, `send_data`, `execute_graphql`, `get_status`
 - Keyring service: `mcp-data-gateway`, account = `api_id`
-- HTTP endpoint: `POST /mcp` on `127.0.0.1:8080` (default), Bearer auth required
+- HTTP endpoint: `POST /mcp` on `127.0.0.1:8080` (default)
+- OAuth Provider endpoints: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]`, `/register`, `/authorize`, `/authorize/consent`, `/token`
