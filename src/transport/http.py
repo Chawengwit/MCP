@@ -33,6 +33,8 @@ import os
 import secrets
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
+from typing import Any
 
 import uvicorn
 from mcp.server import Server
@@ -45,6 +47,14 @@ DEFAULT_PORT = 8080
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 MCP_PATH = "/mcp"
 BEARER_PREFIX = b"Bearer "
+
+# Phase 9.6 — local HTTPS support so Claude Desktop's Custom Connector UI
+# (which rejects http:// URLs) can talk to a server running on the operator's
+# machine. Operators generate certs with `mkcert 127.0.0.1` (so macOS trusts
+# them without a browser warning) and point these env vars at the resulting
+# files.
+ENV_TLS_CERT = "MCP_HTTP_TLS_CERT"
+ENV_TLS_KEY = "MCP_HTTP_TLS_KEY"
 
 # 401 body — short, no token echo, no internal details.
 _UNAUTHORIZED_BODY = b'{"error":"unauthorized"}'
@@ -249,6 +259,38 @@ def resolve_http_settings() -> tuple[str, int, str]:
     return host, port, token
 
 
+def resolve_tls_settings() -> tuple[str | None, str | None]:
+    """Read and validate ``MCP_HTTP_TLS_CERT`` + ``MCP_HTTP_TLS_KEY``.
+
+    Returns ``(cert_path, key_path)`` when TLS is configured, or
+    ``(None, None)`` when both env vars are empty (TLS disabled, server
+    speaks plain HTTP).
+
+    Fail-loud rules:
+
+    - Both vars must be set or both unset. Half-configured TLS is a
+      footgun — uvicorn would silently start without TLS and the
+      operator's "Add Custom Connector" flow in Claude Desktop would
+      fail with an opaque "couldn't connect" error.
+    - Both files must exist on disk. A typo'd path is easier to catch
+      here than to debug from uvicorn's traceback.
+    """
+    cert = os.getenv(ENV_TLS_CERT, "").strip()
+    key = os.getenv(ENV_TLS_KEY, "").strip()
+    if not cert and not key:
+        return None, None
+    if not cert or not key:
+        raise ValueError(
+            f"{ENV_TLS_CERT} and {ENV_TLS_KEY} must both be set or both unset. "
+            f"Got cert={'set' if cert else 'empty'}, key={'set' if key else 'empty'}."
+        )
+    if not Path(cert).is_file():
+        raise ValueError(f"{ENV_TLS_CERT} points to a non-existent file: {cert}")
+    if not Path(key).is_file():
+        raise ValueError(f"{ENV_TLS_KEY} points to a non-existent file: {key}")
+    return cert, key
+
+
 async def run_http(
     server: Server,
     *,
@@ -257,6 +299,8 @@ async def run_http(
     token: str | None = None,
     oauth_dispatcher: Callable[[Scope, Receive, Send], Awaitable[bool]] | None = None,
     oauth_middleware: Callable[[ASGIApp], ASGIApp] | None = None,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
 ) -> None:
     """Serve `server` over Streamable HTTP on `host:port`.
 
@@ -292,6 +336,9 @@ async def run_http(
         port = env_port if port is None else port
         token = env_token if token is None else token
 
+    if tls_cert is None and tls_key is None:
+        tls_cert, tls_key = resolve_tls_settings()
+
     oauth_enabled = oauth_dispatcher is not None or oauth_middleware is not None
     check_loopback_guard(host, token, oauth_enabled=oauth_enabled)
 
@@ -301,11 +348,18 @@ async def run_http(
         oauth_dispatcher=oauth_dispatcher,
         oauth_middleware=oauth_middleware,
     )
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_config=None,
-        access_log=False,
-    )
+    # uvicorn quietly ignores ``ssl_certfile=None``, but passing the kwargs
+    # only when set keeps the config call readable and lets tests assert the
+    # presence/absence of TLS without inspecting None-valued keys.
+    config_kwargs: dict[str, Any] = {
+        "app": app,
+        "host": host,
+        "port": port,
+        "log_config": None,
+        "access_log": False,
+    }
+    if tls_cert and tls_key:
+        config_kwargs["ssl_certfile"] = tls_cert
+        config_kwargs["ssl_keyfile"] = tls_key
+    config = uvicorn.Config(**config_kwargs)
     await uvicorn.Server(config).serve()

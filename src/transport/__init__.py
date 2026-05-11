@@ -21,6 +21,7 @@ from .http import (
     build_app,
     check_loopback_guard,
     resolve_http_settings,
+    resolve_tls_settings,
     run_http,
 )
 from .stdio import run_stdio
@@ -34,6 +35,7 @@ __all__ = [
     "build_app",
     "check_loopback_guard",
     "resolve_http_settings",
+    "resolve_tls_settings",
     "run_http",
     "run_stdio",
 ]

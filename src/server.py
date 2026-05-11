@@ -63,6 +63,7 @@ from src.tools import (  # noqa: E402
 from src.transport import (  # noqa: E402
     LoopbackGuardError,
     resolve_http_settings,
+    resolve_tls_settings,
     run_http,
     run_stdio,
 )
@@ -354,12 +355,17 @@ async def _serve_http(
     """
     try:
         host, port, token = resolve_http_settings()
+        tls_cert, tls_key = resolve_tls_settings()
         oauth_components = await _maybe_build_oauth_components(api_configs, context)
         oauth_enabled = oauth_components is not None
         bearer_label = "set"
         if not token:
             bearer_label = "OAuth Provider" if oauth_enabled else "NOT set — loopback only"
-        _log(f"HTTP transport listening on http://{host}:{port}/mcp (bearer={bearer_label})")
+        # Phase 9.6 — the scheme matches uvicorn's bind. Claude Desktop's
+        # "Add Custom Connector" UI rejects non-https URLs; the banner
+        # uses the real scheme so the operator can copy/paste it.
+        scheme = "https" if tls_cert and tls_key else "http"
+        _log(f"HTTP transport listening on {scheme}://{host}:{port}/mcp (bearer={bearer_label})")
         if oauth_components is not None:
             dispatcher, middleware = oauth_components
             await run_http(
@@ -369,9 +375,18 @@ async def _serve_http(
                 token=token,
                 oauth_dispatcher=dispatcher,
                 oauth_middleware=middleware,
+                tls_cert=tls_cert,
+                tls_key=tls_key,
             )
         else:
-            await run_http(server, host=host, port=port, token=token)
+            await run_http(
+                server,
+                host=host,
+                port=port,
+                token=token,
+                tls_cert=tls_cert,
+                tls_key=tls_key,
+            )
     except (ValueError, LoopbackGuardError) as exc:
         _log_error(str(exc))
         sys.exit(1)
