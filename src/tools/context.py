@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from src.auth import Credentials
+from src.auth.session_login_keyring import KeyringServiceSessionStore
 from src.config import ApiConfig
 from src.events import Recorder
 from src.gateway import GraphQLClient, RestClient
@@ -53,4 +54,14 @@ class ToolContext:
     contextvar, then uses this store to fetch (and refresh) the
     per-user Service API session. ``None`` means the server is running
     without OAuth (stdio, static-bearer-only, or unit tests).
+    """
+
+    keyring_session_store: KeyringServiceSessionStore | None = None
+    """Phase 9.4 — STDIO-mode session resolver.
+
+    Single-operator counterpart to ``service_session_store``. The
+    operator runs ``python -m scripts.session_login <api_id>`` once;
+    credentials + session land in the OS keyring under the same service
+    name as the GitHub OAuth tokens. ``ensure_service_session`` falls
+    back to this store when the contextvar+OAuth path produces nothing.
     """

@@ -91,7 +91,9 @@ async def fetch_data(input_: FetchDataInput, *, context: ToolContext) -> dict[st
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
 
         try:
-            service_session = await ensure_service_session(config=config, context=context)
+            service_session = await ensure_service_session(
+                config=config, api_id=input_.api_id, context=context
+            )
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
@@ -159,7 +161,9 @@ async def send_data(input_: SendDataInput, *, context: ToolContext) -> dict[str,
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
 
         try:
-            service_session = await ensure_service_session(config=config, context=context)
+            service_session = await ensure_service_session(
+                config=config, api_id=input_.api_id, context=context
+            )
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
@@ -226,7 +230,9 @@ async def execute_graphql(input_: GraphQLInput, *, context: ToolContext) -> dict
             )
 
         try:
-            service_session = await ensure_service_session(config=config, context=context)
+            service_session = await ensure_service_session(
+                config=config, api_id=input_.api_id, context=context
+            )
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
@@ -291,7 +297,10 @@ async def get_status(input_: GetStatusInput, *, context: ToolContext) -> dict[st
             # Branch matrix lives in src/tools/auth_resolver.py — sharing it with
             # resolve_auth_headers prevents drift if a new auth.type is added.
             state, expires_at = await peek_auth_state(
-                config=config, api_id=api_id, credentials=context.credentials
+                config=config,
+                api_id=api_id,
+                credentials=context.credentials,
+                keyring_session_store=context.keyring_session_store,
             )
             entry: dict[str, Any] = {
                 "api_id": api_id,

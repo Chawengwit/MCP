@@ -21,44 +21,63 @@ if TYPE_CHECKING:
 KNOWN_AUTH_TYPES: frozenset[str] = frozenset({"oauth2", "bearer", "api_key", "session_login"})
 
 
-async def ensure_service_session(*, config: ApiConfig, context: ToolContext) -> SessionInfo | None:
-    """Resolve the per-user Service API session for the current request.
+async def ensure_service_session(
+    *, config: ApiConfig, api_id: str, context: ToolContext
+) -> SessionInfo | None:
+    """Resolve the Service API session for the current request.
 
     Resolution order:
 
     1. ``context.service_session`` — pre-injected (tests, future direct
        wiring). If set, use as-is.
     2. The current request's ``user_id`` (from the OAuth middleware's
-       contextvar) plus ``context.service_session_store`` — look up and
-       transparently refresh if near expiry.
-    3. None — caller must surface AUTH_REQUIRED.
+       contextvar) plus ``context.service_session_store`` — HTTP+OAuth
+       multi-tenant path. Look up and transparently refresh near expiry.
+    3. ``context.keyring_session_store`` — STDIO single-operator path.
+       Look up by ``api_id`` (no per-user identity in STDIO mode), same
+       refresh-near-expiry behavior.
+    4. None — caller must surface AUTH_REQUIRED.
 
     Returns ``None`` only when the API doesn't use ``session_login`` OR
-    no user / store is available. The caller (``resolve_auth_headers``)
-    decides whether ``None`` is fatal based on the auth type.
+    no store can produce a session. The caller
+    (``resolve_auth_headers``) decides whether ``None`` is fatal based
+    on the auth type.
     """
     if config.auth is None or (config.auth.type or "").lower() != "session_login":
         return None
 
+    # 1. Pre-injected (tests / direct injection)
     if context.service_session is not None:
         return context.service_session
 
-    if context.service_session_store is None:
-        return None
+    # 2. HTTP+OAuth path: contextvar user_id → ServiceSessionStore
+    if context.service_session_store is not None:
+        user = get_current_mcp_user()
+        if user is not None:
+            user_id = user.get("user_id")
+            if user_id:
+                try:
+                    return await context.service_session_store.get(user_id)
+                except (AuthRequiredError, AuthError):
+                    # Fall through to the keyring path.
+                    pass
 
-    user = get_current_mcp_user()
-    if user is None:
-        return None
-    user_id = user.get("user_id")
-    if not user_id:
-        return None
+    # 3. STDIO path: keyring lookup by api_id
+    if context.keyring_session_store is not None:
+        try:
+            stored = await context.keyring_session_store.get(api_id)
+        except (AuthRequiredError, AuthError):
+            return None
+        return SessionInfo(
+            user_id=stored.user_id,
+            session_id=stored.session_id,
+            session_expire=stored.session_expire,
+            company_group=stored.company_group,
+            user_type=stored.user_type,
+            app_package=stored.app_package,
+        )
 
-    try:
-        return await context.service_session_store.get(user_id)
-    except (AuthRequiredError, AuthError):
-        # Surface as "no session" — the auth resolver will raise
-        # AuthRequiredError with the right operator-facing message.
-        return None
+    return None
 
 
 class UnknownAuthTypeError(ValueError):
@@ -135,7 +154,11 @@ async def resolve_auth_headers(
 
 
 async def peek_auth_state(
-    *, config: ApiConfig, api_id: str, credentials: Credentials
+    *,
+    config: ApiConfig,
+    api_id: str,
+    credentials: Credentials,
+    keyring_session_store: object | None = None,
 ) -> tuple[str, float | None]:
     """Return (auth_state, expires_at_or_None) for `get_status` — strictly read-only.
 
@@ -174,10 +197,18 @@ async def peek_auth_state(
         return "unauthenticated", None
 
     if auth_type == "session_login":
-        # `peek_auth_state` is read-only and per-API; it has no access
-        # to the request's ToolContext. So the most we can say without
-        # leaking per-user state into get_status is "this API is OAuth-
-        # backed at the transport layer".
+        # STDIO operators can pre-populate the session via
+        # ``scripts/session_login.py``; when a keyring store is wired in
+        # the get_status path can report the real state of that entry.
+        # In HTTP+OAuth mode the store is absent and we fall back to the
+        # transport-managed signal.
+        if keyring_session_store is not None:
+            stored = await keyring_session_store.peek(api_id)  # type: ignore[attr-defined]
+            if stored is None:
+                return "unauthenticated", None
+            if stored.session_expire - time.time() < 0:
+                return "expired", float(stored.session_expire)
+            return "authenticated", float(stored.session_expire)
         return "oauth_managed", None
 
     # Unreachable: KNOWN_AUTH_TYPES check at the top covers all branches.

@@ -33,6 +33,7 @@ from pydantic import ValidationError  # noqa: E402
 
 from src.auth import Credentials, OAuth, OAuthConfig  # noqa: E402
 from src.auth.service_api import authenticate as service_api_authenticate  # noqa: E402
+from src.auth.session_login_keyring import KeyringServiceSessionStore  # noqa: E402
 from src.config import ApiConfig, load_api_configs  # noqa: E402
 from src.events import Recorder  # noqa: E402
 from src.gateway import GraphQLClient, RestClient  # noqa: E402
@@ -144,12 +145,20 @@ def _build_tool_context(*, api_configs: dict[str, ApiConfig], recorder: Recorder
         max_retries = cfg.limits.max_retries if cfg.limits else 3
         return GraphQLClient(url=cfg.base_url, timeout_seconds=timeout, max_retries=max_retries)
 
+    # Phase 9.4 — keyring-backed session_login store is wired in
+    # unconditionally so both STDIO and HTTP transports can resolve a
+    # ``session_login`` API from operator-managed credentials. In HTTP+OAuth
+    # mode the OAuth Provider's store takes precedence; this is only the
+    # fallback. In STDIO mode this is the only path (no OAuth flow exists).
+    keyring_session_store = KeyringServiceSessionStore.from_configs(api_configs)
+
     return ToolContext(
         configs=api_configs,
         credentials=credentials,
         rest_client_factory=rest_factory,
         graphql_client_factory=graphql_factory,
         recorder=recorder,
+        keyring_session_store=keyring_session_store,
     )
 
 
