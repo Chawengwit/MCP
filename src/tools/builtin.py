@@ -36,7 +36,7 @@ async def list_apis(
                 "name": api_name,
                 "type": api_config.type,
                 "base_url": api_config.base_url,
-                "endpoints": list(api_config.endpoints.keys()),
+                "endpoints": _serialize_endpoints(api_config),
             }
             for api_name, api_config in api_configs.items()
         ]
@@ -98,3 +98,38 @@ async def list_apis(
 def _now_iso() -> str:
     """Return current time in ISO 8601 format (UTC)."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _serialize_endpoints(api_config: ApiConfig) -> list[dict[str, Any]]:
+    """Return the LLM-facing endpoint metadata for ``list_apis``.
+
+    Each entry includes the basic shape (``name``, ``method``, ``path``,
+    ``query_params``) plus the Phase 9.5 hints (``description``,
+    ``required_params``, ``param_hints``) when set. Hints are omitted
+    when ``None`` so the response stays compact for endpoints that
+    haven't been documented yet — LLMs treat absent fields as
+    "no information" rather than "no constraint".
+
+    Returning a richer ``list[dict]`` is a deliberate replacement for
+    the older ``list[str]`` of just endpoint names. The LLM sees every
+    endpoint's constraints before it ever attempts a call, so prompts
+    like *"get me 3 subscribers"* resolve to a correct ``fetch_data``
+    call on the first try instead of probing the upstream API.
+    """
+    out: list[dict[str, Any]] = []
+    for endpoint_name, endpoint in api_config.endpoints.items():
+        entry: dict[str, Any] = {"name": endpoint_name}
+        if endpoint.method:
+            entry["method"] = endpoint.method.upper()
+        if endpoint.path:
+            entry["path"] = endpoint.path
+        if endpoint.query_params:
+            entry["query_params"] = list(endpoint.query_params)
+        if endpoint.description:
+            entry["description"] = endpoint.description
+        if endpoint.required_params:
+            entry["required_params"] = list(endpoint.required_params)
+        if endpoint.param_hints:
+            entry["param_hints"] = dict(endpoint.param_hints)
+        out.append(entry)
+    return out

@@ -270,6 +270,121 @@ async def test_fetch_data_rejects_graphql_api(
     assert result["error"]["code"] == "VALIDATION_ERROR"
 
 
+# ----------------------------------------------------------------------
+# Phase 9.5 — required_params validation
+# ----------------------------------------------------------------------
+
+
+async def test_fetch_data_missing_required_param_returns_validation_error(
+    context_factory: Callable[..., ToolContext],
+) -> None:
+    """Endpoints can declare ``required_params`` in api_configs.json. When
+    the LLM omits one, we MUST return a ``VALIDATION_ERROR`` before the
+    upstream API gets called — and surface ``param_hints`` so the LLM can
+    immediately retry with a valid payload."""
+    cfg = ApiConfig(
+        type="rest",
+        base_url="https://svc.example.com",
+        auth=ApiAuthConfig(
+            type="oauth2",
+            provider="example",
+            client_id="cid",
+            authorize_url="https://x/auth",
+            token_url="https://x/token",
+            scopes=["read"],
+        ),
+        endpoints={
+            "list_things": EndpointConfig(
+                method="GET",
+                path="/v1/things",
+                required_params=["mode"],
+                param_hints={"mode": "Filter — 'all' or 'active'"},
+            ),
+        },
+    )
+    ctx = context_factory({"svc": cfg})
+    result = await fetch_data(
+        FetchDataInput(api_id="svc", endpoint="list_things", filters={"limit": 3}),
+        context=ctx,
+    )
+    err = result["error"]
+    assert err["code"] == "VALIDATION_ERROR"
+    assert err["details"]["missing_params"] == ["mode"]
+    # The hint for the missing param flows back so the LLM can retry.
+    assert "Filter" in err["details"]["param_hints"]["mode"]
+
+
+async def test_fetch_data_empty_string_required_param_treated_as_missing(
+    context_factory: Callable[..., ToolContext],
+) -> None:
+    """``required_params`` MUST treat whitespace-only / empty-string values
+    as missing — otherwise the LLM could short-circuit the validator by
+    passing ``""`` and the upstream API would receive a degenerate request."""
+    cfg = ApiConfig(
+        type="rest",
+        base_url="https://svc.example.com",
+        auth=ApiAuthConfig(
+            type="oauth2",
+            provider="example",
+            client_id="cid",
+            authorize_url="https://x/auth",
+            token_url="https://x/token",
+            scopes=["read"],
+        ),
+        endpoints={
+            "list_things": EndpointConfig(
+                method="GET",
+                path="/v1/things",
+                required_params=["mode"],
+            ),
+        },
+    )
+    ctx = context_factory({"svc": cfg})
+    result = await fetch_data(
+        FetchDataInput(api_id="svc", endpoint="list_things", filters={"mode": "   "}),
+        context=ctx,
+    )
+    assert result["error"]["code"] == "VALIDATION_ERROR"
+    assert result["error"]["details"]["missing_params"] == ["mode"]
+
+
+async def test_fetch_data_required_params_pass_when_provided(
+    context_factory: Callable[..., ToolContext],
+    make_rest_response: Callable[..., httpx.Response],
+) -> None:
+    """Happy path with ``required_params`` set — the call proceeds normally
+    once the LLM supplies the right keys."""
+    cfg = ApiConfig(
+        type="rest",
+        base_url="https://svc.example.com",
+        auth=ApiAuthConfig(
+            type="oauth2",
+            provider="example",
+            client_id="cid",
+            authorize_url="https://x/auth",
+            token_url="https://x/token",
+            scopes=["read"],
+        ),
+        endpoints={
+            "list_things": EndpointConfig(
+                method="GET",
+                path="/v1/things",
+                required_params=["mode"],
+            ),
+        },
+    )
+    ctx = context_factory(
+        {"svc": cfg},
+        rest_responses=[make_rest_response(200, {"items": []})],
+    )
+    result = await fetch_data(
+        FetchDataInput(api_id="svc", endpoint="list_things", filters={"mode": "all", "limit": 3}),
+        context=ctx,
+    )
+    assert "data" in result
+    assert "error" not in result
+
+
 async def test_fetch_data_with_bearer_auth_uses_env_token(
     bearer_api_config: ApiConfig,
     context_factory: Callable[..., ToolContext],

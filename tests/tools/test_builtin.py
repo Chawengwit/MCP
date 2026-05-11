@@ -67,7 +67,8 @@ async def test_list_apis_omits_auth_logging_limits(recorder: Recorder) -> None:
     assert api_entry["name"] == "secure_api"
     assert api_entry["type"] == "rest"
     assert api_entry["base_url"] == "https://secure.example.com"
-    assert api_entry["endpoints"] == ["data"]
+    # Phase 9.5 — endpoints are dicts now; name is the only guaranteed field.
+    assert api_entry["endpoints"] == [{"name": "data"}]
 
 
 async def test_list_apis_records_one_audit_one_usage_one_insight(
@@ -114,7 +115,8 @@ async def test_list_apis_empty_config(recorder: Recorder) -> None:
 
 
 async def test_list_apis_endpoint_names(recorder: Recorder) -> None:
-    """Endpoint names appear as a list of keys, not the full endpoint config."""
+    """Each endpoint is serialised as a dict that always has a ``name`` field
+    (Phase 9.5 enrichment; pre-Phase-9.5 tests asserted plain strings)."""
     api_configs = {
         "api_with_endpoints": ApiConfig(
             type="rest",
@@ -131,7 +133,92 @@ async def test_list_apis_endpoint_names(recorder: Recorder) -> None:
     endpoints = result["data"][0]["endpoints"]
 
     assert isinstance(endpoints, list)
-    assert sorted(endpoints) == ["delete_data", "get_data", "post_data"]
+    names = sorted(e["name"] for e in endpoints)
+    assert names == ["delete_data", "get_data", "post_data"]
+
+
+# ----------------------------------------------------------------------
+# Phase 9.5 — LLM-facing endpoint metadata
+# ----------------------------------------------------------------------
+
+
+async def test_list_apis_surfaces_endpoint_method_path_query_params(
+    recorder: Recorder,
+) -> None:
+    """``list_apis`` includes ``method`` / ``path`` / ``query_params`` so the
+    LLM can construct an exact call without guessing."""
+    api_configs = {
+        "svc": ApiConfig(
+            type="rest",
+            base_url="https://svc.example.com",
+            endpoints={
+                "search": EndpointConfig(
+                    method="GET",
+                    path="/v1/search",
+                    query_params=["q", "limit"],
+                ),
+            },
+        ),
+    }
+    result = await list_apis(uuid4(), recorder, api_configs)
+    endpoint = result["data"][0]["endpoints"][0]
+    assert endpoint["name"] == "search"
+    assert endpoint["method"] == "GET"
+    assert endpoint["path"] == "/v1/search"
+    assert endpoint["query_params"] == ["q", "limit"]
+
+
+async def test_list_apis_surfaces_description_required_params_and_hints(
+    recorder: Recorder,
+) -> None:
+    """The Phase 9.5 metadata fields appear when set, in their canonical
+    form, so an LLM reading the result can fill required params on the
+    first try."""
+    api_configs = {
+        "svc": ApiConfig(
+            type="rest",
+            base_url="https://svc.example.com",
+            endpoints={
+                "list_things": EndpointConfig(
+                    method="GET",
+                    path="/v1/things",
+                    query_params=["mode", "limit"],
+                    description="List things in the service.",
+                    required_params=["mode"],
+                    param_hints={
+                        "mode": "Filter mode — 'all' or 'active'",
+                        "limit": "Max results, default 20",
+                    },
+                ),
+            },
+        ),
+    }
+    result = await list_apis(uuid4(), recorder, api_configs)
+    endpoint = result["data"][0]["endpoints"][0]
+    assert endpoint["description"] == "List things in the service."
+    assert endpoint["required_params"] == ["mode"]
+    assert endpoint["param_hints"]["mode"].startswith("Filter mode")
+
+
+async def test_list_apis_omits_metadata_fields_when_unset(
+    recorder: Recorder,
+) -> None:
+    """Endpoints without Phase 9.5 metadata MUST NOT carry empty hint /
+    required_params keys — LLMs may treat presence-with-empty as 'no
+    constraint, but I should ask'. Cleaner to omit entirely."""
+    api_configs = {
+        "svc": ApiConfig(
+            type="rest",
+            base_url="https://svc.example.com",
+            endpoints={"bare": EndpointConfig(method="GET", path="/bare")},
+        ),
+    }
+    result = await list_apis(uuid4(), recorder, api_configs)
+    endpoint = result["data"][0]["endpoints"][0]
+    assert "description" not in endpoint
+    assert "required_params" not in endpoint
+    assert "param_hints" not in endpoint
+    assert "query_params" not in endpoint  # also omitted when unset
 
 
 def _read_jsonl_dir(path: Path) -> list[dict]:

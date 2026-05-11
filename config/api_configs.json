@@ -56,7 +56,16 @@
         "list_subscribers": {
           "method": "GET",
           "path": "/v2/list/35/subscribers",
-          "query_params": ["display_mode", "order_by", "order_type", "page", "limit"]
+          "query_params": ["display_mode", "order_by", "order_type", "page", "limit"],
+          "description": "List subscribers in Taximail mailing list 35. Returns subscriber email, status, and metadata.",
+          "required_params": ["display_mode"],
+          "param_hints": {
+            "display_mode": "REQUIRED. Subscriber status filter. Valid values: 'all', 'active', 'unsubscribed', 'bounce', 'spam'. Use 'all' to see every subscriber regardless of status.",
+            "order_by": "Sort field. Common values: 'email', 'subscribe_date'.",
+            "order_type": "Sort direction. Valid values: 'asc', 'desc'.",
+            "page": "1-indexed page number for pagination. Defaults to 1.",
+            "limit": "Max subscribers per page. Defaults to API default. Use 3-10 for previews."
+          }
         }
       },
       "logging": {

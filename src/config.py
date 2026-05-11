@@ -62,6 +62,38 @@ class EndpointConfig(BaseModel):
     query_params: list[str] | None = None
     body_schema: str | None = None
 
+    # ------------------------------------------------------------------
+    # Phase 9.5 — LLM-facing metadata
+    # ------------------------------------------------------------------
+    # These three fields are surfaced by ``list_apis`` so the LLM can
+    # construct a valid call on the first try instead of probing the
+    # upstream API for "missing required parameter" errors. All optional
+    # for backward compatibility; existing configs keep working.
+    description: str | None = None
+    """One-sentence human-readable purpose of the endpoint.
+
+    The LLM reads this to decide whether to pick this endpoint for a
+    user's prompt. Keep it short and verb-led, e.g. *"List subscribers
+    in a Taximail mailing list."*
+    """
+
+    required_params: list[str] | None = None
+    """Filters that MUST be present on every call.
+
+    Validated by ``fetch_data`` / ``send_data`` before the request hits
+    the upstream API — Claude sees a clear ``VALIDATION_ERROR`` on a
+    missing param instead of trying random keys until something works.
+    """
+
+    param_hints: dict[str, str] | None = None
+    """Per-parameter free-text help (valid values, format, gotchas).
+
+    Surfaced in ``list_apis`` alongside ``required_params`` so the LLM
+    can fill the right values without seeing the upstream API docs.
+    Example: ``{"display_mode": "Filter mode — 'all', 'active', or
+    'unsubscribed'."}``
+    """
+
 
 class ApiLoggingConfig(BaseModel):
     request_payload: str = "metadata"

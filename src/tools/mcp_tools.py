@@ -90,6 +90,15 @@ async def fetch_data(input_: FetchDataInput, *, context: ToolContext) -> dict[st
         if endpoint_cfg is None:
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
 
+        validation_error = _check_required_params(
+            api_id=input_.api_id,
+            endpoint=input_.endpoint,
+            endpoint_cfg=endpoint_cfg,
+            provided=input_.filters,
+        )
+        if validation_error is not None:
+            return validation_error
+
         try:
             service_session = await ensure_service_session(
                 config=config, api_id=input_.api_id, context=context
@@ -159,6 +168,18 @@ async def send_data(input_: SendDataInput, *, context: ToolContext) -> dict[str,
         endpoint_cfg = config.endpoints.get(input_.endpoint)
         if endpoint_cfg is None:
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
+
+        # send_data validates against payload (the request body) rather than
+        # filters — required_params on a POST endpoint describes required
+        # body fields, not query string params.
+        validation_error = _check_required_params(
+            api_id=input_.api_id,
+            endpoint=input_.endpoint,
+            endpoint_cfg=endpoint_cfg,
+            provided=input_.payload,
+        )
+        if validation_error is not None:
+            return validation_error
 
         try:
             service_session = await ensure_service_session(
@@ -404,6 +425,57 @@ def _endpoint_not_found_error(api_id: str, endpoint: str) -> dict[str, Any]:
         code="ENDPOINT_NOT_FOUND",
         message=f"Endpoint '{endpoint}' not defined for API '{api_id}'",
         details={"api_id": api_id, "endpoint": endpoint},
+    )
+
+
+def _check_required_params(
+    *,
+    api_id: str,
+    endpoint: str,
+    endpoint_cfg: Any,
+    provided: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return a ``VALIDATION_ERROR`` envelope when a required param is missing.
+
+    ``required_params`` (Phase 9.5) is defined per endpoint in
+    ``api_configs.json``. Catching the missing-key case here keeps the
+    upstream API from receiving a half-built request — and gives the LLM
+    a structured error it can immediately recover from, including the
+    ``param_hints`` so the next call has the right shape.
+    """
+    required = endpoint_cfg.required_params or []
+    if not required:
+        return None
+    supplied = provided or {}
+    missing: list[str] = []
+    for name in required:
+        value = supplied.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(name)
+    if not missing:
+        return None
+    details: dict[str, Any] = {
+        "api_id": api_id,
+        "endpoint": endpoint,
+        "missing_params": missing,
+    }
+    if endpoint_cfg.param_hints:
+        # Echo only hints for the missing params — keeps the error
+        # focused and doesn't leak hints for unrelated params.
+        hints = {
+            name: endpoint_cfg.param_hints[name]
+            for name in missing
+            if name in endpoint_cfg.param_hints
+        }
+        if hints:
+            details["param_hints"] = hints
+    return _build_error(
+        code="VALIDATION_ERROR",
+        message=(
+            f"Endpoint '{endpoint}' on '{api_id}' requires parameter(s) "
+            f"that were not provided: {missing}."
+        ),
+        details=details,
     )
 
 
