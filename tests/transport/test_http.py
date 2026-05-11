@@ -14,7 +14,6 @@ lifespan setup so `StreamableHTTPSessionManager.run()` enters/exits cleanly).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -31,7 +30,6 @@ from src.transport.http import (
     build_app,
     check_loopback_guard,
     resolve_http_settings,
-    resolve_tls_settings,
     run_http,
 )
 from starlette.testclient import TestClient
@@ -514,144 +512,3 @@ def test_build_app_response_does_not_leak_bearer_token() -> None:
 
     for body in seen_bodies:
         assert VALID_TOKEN not in body, "bearer token leaked into response body"
-
-
-# ---------------------------------------------------------------------------
-# Phase 9.6 — resolve_tls_settings (local HTTPS for Claude Desktop)
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_tls_settings_returns_none_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Both env vars empty → TLS disabled, server speaks plain HTTP."""
-    monkeypatch.delenv("MCP_HTTP_TLS_CERT", raising=False)
-    monkeypatch.delenv("MCP_HTTP_TLS_KEY", raising=False)
-    assert resolve_tls_settings() == (None, None)
-
-
-def test_resolve_tls_settings_returns_paths_when_both_set(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cert = tmp_path / "cert.pem"
-    key = tmp_path / "key.pem"
-    cert.write_text("-----BEGIN CERTIFICATE-----\n")
-    key.write_text("-----BEGIN PRIVATE KEY-----\n")
-    monkeypatch.setenv("MCP_HTTP_TLS_CERT", str(cert))
-    monkeypatch.setenv("MCP_HTTP_TLS_KEY", str(key))
-    assert resolve_tls_settings() == (str(cert), str(key))
-
-
-def test_resolve_tls_settings_rejects_cert_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Half-configured TLS is a footgun — fail loud."""
-    cert = tmp_path / "cert.pem"
-    cert.write_text("x")
-    monkeypatch.setenv("MCP_HTTP_TLS_CERT", str(cert))
-    monkeypatch.delenv("MCP_HTTP_TLS_KEY", raising=False)
-    with pytest.raises(ValueError, match="must both be set or both unset"):
-        resolve_tls_settings()
-
-
-def test_resolve_tls_settings_rejects_key_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    key = tmp_path / "key.pem"
-    key.write_text("x")
-    monkeypatch.delenv("MCP_HTTP_TLS_CERT", raising=False)
-    monkeypatch.setenv("MCP_HTTP_TLS_KEY", str(key))
-    with pytest.raises(ValueError, match="must both be set or both unset"):
-        resolve_tls_settings()
-
-
-def test_resolve_tls_settings_rejects_missing_cert_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Typo'd path → caught at startup, not in the middle of a request."""
-    key = tmp_path / "key.pem"
-    key.write_text("x")
-    monkeypatch.setenv("MCP_HTTP_TLS_CERT", str(tmp_path / "does-not-exist.pem"))
-    monkeypatch.setenv("MCP_HTTP_TLS_KEY", str(key))
-    with pytest.raises(ValueError, match="non-existent file"):
-        resolve_tls_settings()
-
-
-def test_resolve_tls_settings_rejects_missing_key_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cert = tmp_path / "cert.pem"
-    cert.write_text("x")
-    monkeypatch.setenv("MCP_HTTP_TLS_CERT", str(cert))
-    monkeypatch.setenv("MCP_HTTP_TLS_KEY", str(tmp_path / "does-not-exist.pem"))
-    with pytest.raises(ValueError, match="non-existent file"):
-        resolve_tls_settings()
-
-
-async def test_run_http_passes_ssl_kwargs_to_uvicorn_when_tls_set(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``run_http`` must forward cert/key to uvicorn so the listener is HTTPS.
-
-    We capture the ``uvicorn.Config`` constructor kwargs because that's the
-    only observable surface between our code and uvicorn — the actual TLS
-    handshake is uvicorn's responsibility and not in scope here.
-    """
-    cert = tmp_path / "cert.pem"
-    key = tmp_path / "key.pem"
-    cert.write_text("x")
-    key.write_text("x")
-
-    captured: dict[str, object] = {}
-
-    class _StubConfig:
-        def __init__(self, **kwargs: object) -> None:
-            captured.update(kwargs)
-
-    class _StubServer:
-        def __init__(self, config: object) -> None:
-            self._config = config
-
-        async def serve(self) -> None:
-            return None
-
-    monkeypatch.setattr(http_module.uvicorn, "Config", _StubConfig)
-    monkeypatch.setattr(http_module.uvicorn, "Server", _StubServer)
-
-    await run_http(
-        _make_minimal_server(),
-        host="127.0.0.1",
-        port=8443,
-        token="",
-        tls_cert=str(cert),
-        tls_key=str(key),
-    )
-    assert captured["ssl_certfile"] == str(cert)
-    assert captured["ssl_keyfile"] == str(key)
-
-
-async def test_run_http_omits_ssl_kwargs_when_tls_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No TLS configured → uvicorn.Config receives no ssl_* keys at all
-    (so existing HTTP deployments stay byte-identical)."""
-    monkeypatch.delenv("MCP_HTTP_TLS_CERT", raising=False)
-    monkeypatch.delenv("MCP_HTTP_TLS_KEY", raising=False)
-
-    captured: dict[str, object] = {}
-
-    class _StubConfig:
-        def __init__(self, **kwargs: object) -> None:
-            captured.update(kwargs)
-
-    class _StubServer:
-        def __init__(self, config: object) -> None:
-            self._config = config
-
-        async def serve(self) -> None:
-            return None
-
-    monkeypatch.setattr(http_module.uvicorn, "Config", _StubConfig)
-    monkeypatch.setattr(http_module.uvicorn, "Server", _StubServer)
-
-    await run_http(_make_minimal_server(), host="127.0.0.1", port=8080, token="")
-    assert "ssl_certfile" not in captured
-    assert "ssl_keyfile" not in captured

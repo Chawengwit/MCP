@@ -61,7 +61,6 @@ What this file pins:
 - Bearer middleware is a **pure-ASGI** callable (NOT `BaseHTTPMiddleware`) — `BaseHTTPMiddleware` buffers responses and would break the SSE streams Streamable HTTP can return.
 - `uvicorn` owns SIGINT/SIGTERM; the stdio branch keeps the existing `loop.add_signal_handler` setup. Don't double-install.
 - All logs stay on **stderr** in both transports (uvicorn `log_config=None`, `access_log=False`). The stdout reservation isn't strictly needed in HTTP mode, but keeping the discipline avoids future transport-toggle surprises.
-- **Local HTTPS (Phase 9.6)**: set `MCP_HTTP_TLS_CERT` + `MCP_HTTP_TLS_KEY` to enable TLS via uvicorn's `ssl_certfile` / `ssl_keyfile`. Both must be set or both unset (half-configured TLS fails loud at startup). Required for Claude Desktop's "Add custom connector" UI, which rejects `http://` URLs. Generate certs with `mkcert 127.0.0.1 localhost` so macOS Keychain trusts them without warnings. The banner reflects the real scheme (`http://` or `https://`).
 
 #### OAuth Provider mode (Phase 9)
 

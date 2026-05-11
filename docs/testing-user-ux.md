@@ -297,107 +297,38 @@ The only differences:
 
 ---
 
-## Scenario C — HTTP + OAuth via Claude Desktop's Custom Connector (BETA)
+## Why there's no "Claude Desktop Custom Connector" scenario
 
-Claude Desktop ships a "Add custom connector" dialog (Settings → Connectors →
-Add custom connector) that does the OAuth dance from inside the app — same
-flow as Claude.ai web, but running entirely on your machine. The catch:
-**the dialog rejects `http://` URLs**, so the MCP server must speak HTTPS
-even on loopback. Phase 9.6 adds the TLS knobs to do this without ngrok.
+Claude Desktop's **Settings → Connectors → Add custom connector** dialog
+looks like an obvious third scenario, but it routes the URL through
+Anthropic's cloud API for validation. Observed error when adding
+`https://127.0.0.1:8080/mcp`:
 
-### Phase 1 — Generate a locally-trusted cert (one-time per machine)
+```
+POST /api/organizations/{orgId}/mcp/remote_servers
+400 invalid_request_error
+"url: Localhost URLs cannot be used because our servers cannot reach
+your local machine. Provide a publicly accessible MCP server URL."
+```
 
-- [ ] **CC1.** Install mkcert and register its local CA in macOS Keychain:
-  ```bash
-  brew install mkcert
-  mkcert -install
-  ```
-- [ ] **CC2.** Generate a cert for `127.0.0.1` (and `localhost` as a
-      convenience):
-  ```bash
-  cd /Users/<you>/Documents/MCP
-  mkcert 127.0.0.1 localhost
-  ```
-  Output:
-  ```
-  Created a new certificate valid for the following names 📜
-   - "127.0.0.1"
-   - "localhost"
+Anthropic's backend must reach the MCP URL itself, so any `127.0.0.1` /
+`localhost` / private-network address is rejected. HTTPS, valid certs,
+and CORS make no difference — the constraint is network reachability
+from Anthropic's cloud, not protocol.
 
-  The certificate is at "./127.0.0.1+1.pem"
-  The key is at "./127.0.0.1+1-key.pem"
-  ```
-- [ ] **CC3.** Confirm the files exist:
-  ```bash
-  ls 127.0.0.1+1*.pem
-  ```
+Practical consequences:
 
-> 🔐 mkcert's local CA is added to your system keychain, so any browser
-> (and Claude Desktop's Electron WebView) trusts the cert without a warning.
-> The cert is **not** shared anywhere — the private key never leaves your machine.
-
-### Phase 2 — Operator deploy with HTTPS
-
-- [ ] **CC4.** Terminal #1 — set the TLS env vars in addition to the OAuth
-      Provider key:
-  ```bash
-  export MCP_OAUTH_ENCRYPTION_KEY=$(.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-  export MCP_CORS_ALLOWED_ORIGINS="*"
-  export MCP_HTTP_TLS_CERT="$PWD/127.0.0.1+1.pem"
-  export MCP_HTTP_TLS_KEY="$PWD/127.0.0.1+1-key.pem"
-  ```
-- [ ] **CC5.** Start the server with the HTTPS issuer:
-  ```bash
-  MCP_TRANSPORT=http \
-  MCP_OAUTH_ISSUER="https://127.0.0.1:8080" \
-  .venv/bin/python -m src.server
-  ```
-  Expected banner:
-  ```
-  [...] HTTP transport listening on https://127.0.0.1:8080/mcp (bearer=OAuth Provider)
-  ```
-  ↑ Note the `https://` — that's the proof TLS is on.
-- [ ] **CC6.** Sanity-check from another terminal:
-  ```bash
-  curl -s https://127.0.0.1:8080/.well-known/oauth-authorization-server | python3 -m json.tool
-  ```
-  Should return RFC 8414 metadata (the `mkcert` CA makes the system curl
-  trust the cert by default).
-
-### Phase 3 — User: add connector in Claude Desktop (no terminal)
-
-- [ ] **CC7.** Claude Desktop → Settings → Connectors → **Add custom connector**
-- [ ] **CC8.** Fill the dialog:
-  - **Name**: `Taximail HTTPS`
-  - **Remote MCP server URL**: `https://127.0.0.1:8080/mcp`
-  - **OAuth Client ID** / **Secret**: leave blank (Dynamic Client Registration
-    handles it)
-- [ ] **CC9.** Click **Add**
-
-### Phase 4 — User: consent in browser
-
-- [ ] **CC10.** Claude Desktop opens a browser tab pointing at our consent
-      form (`https://127.0.0.1:8080/authorize?...`)
-- [ ] **CC11.** Enter Service API credentials **in the HTML form** — same
-      as Scenario B
-- [ ] **CC12.** Click **Authorize** → browser redirects to Claude Desktop's
-      callback → Claude Desktop receives the token
-
-### Phase 5 — Use it
-
-- [ ] **CC13.** Open a new conversation in Claude Desktop
-- [ ] **CC14.** Send the prompt:
-  > **"Get me 3 Taximail subscribers from the HTTPS connector"**
-- [ ] **CC15.** Expected — Claude calls `fetch_data` via the HTTPS connector
-      and returns real data
-
-### Claude Desktop HTTPS key takeaways
-
-- ✅ **Full Claude Desktop UI** — same Custom Connector flow as Claude.ai web.
-- ✅ **No public network exposure** — server stays on 127.0.0.1.
-- 🟡 **One-time cert generation** — mkcert handles the trust dance.
-- ✅ **HTTPS is mandatory** — Claude Desktop's dialog explicitly rejects
-      `http://` URLs (verified manually).
+- ✅ **For local development**, use Scenario A (STDIO + Claude Desktop)
+  or Scenario B (HTTP + Inspector). Both cover the natural-language UX
+  without leaving the operator's machine.
+- ✅ **For real production**, deploy the MCP server to a public HTTPS
+  endpoint (VPS, Railway, Fly.io, etc.) and add it as a custom
+  connector from there. The OAuth Provider + CORS layers from Phase 9
+  are already production-ready; only the deployment + DNS + real-
+  domain TLS steps remain (tracked as Phase 10).
+- 🚫 **Cloudflare Tunnel / ngrok** would technically work but route
+  traffic through a third party — verify against your company's
+  policy before using.
 
 ---
 
