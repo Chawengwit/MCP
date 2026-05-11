@@ -42,6 +42,16 @@ class ApiAuthConfig(BaseModel):
         None  # request header name used to carry session_id to API endpoints
     )
     session_format: str | None = None  # template for header value (e.g. "Bearer {session_id}")
+    login_content_type: str | None = None
+    """How to encode the login POST body.
+
+    Accepted values:
+      - ``"application/json"`` (default) — body sent as JSON.
+      - ``"application/x-www-form-urlencoded"`` — body sent as form data
+        (some Service APIs require this, e.g. Taximail).
+
+    Other values fall back to JSON with a stderr warning.
+    """
 
 
 class EndpointConfig(BaseModel):

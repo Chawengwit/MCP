@@ -20,7 +20,9 @@ Failure modes:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import sys
 from typing import Any
 
 import httpx
@@ -30,6 +32,16 @@ from src.config import ApiAuthConfig, ApiConfig
 from src.oauth_provider.schemas import SessionInfo
 
 logger = logging.getLogger("mcp.auth.service_api")
+
+# Sentinel for ``user_id_field``: when set, the user_id is derived from a
+# SHA-256 fingerprint of the api_key rather than looked up in the response.
+# Useful when the Service API response does not expose a stable per-user
+# identifier (only a tenant/company group), as in Taximail.
+USER_ID_FROM_API_KEY = "_api_key_fingerprint"
+
+_SUPPORTED_LOGIN_CONTENT_TYPES = frozenset(
+    {"application/json", "application/x-www-form-urlencoded"}
+)
 
 
 class ServiceApiConfigurationError(AuthError):
@@ -55,7 +67,7 @@ async def authenticate(
     if auth_config is None or (auth_config.type or "").lower() != "session_login":
         raise ServiceApiConfigurationError("Service API config must have auth.type=session_login.")
 
-    login_url, method, payload, headers = _build_request(
+    login_url, method, payload, headers, content_type = _build_request(
         config=config,
         auth=auth_config,
         api_key=api_key,
@@ -65,7 +77,13 @@ async def authenticate(
     timeout = config.limits.timeout_seconds if config.limits else 30
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.request(method, login_url, json=payload, headers=headers)
+            if content_type == "application/x-www-form-urlencoded":
+                # httpx serializes a dict body as form-urlencoded when passed
+                # as ``data=`` (the Content-Type header is set automatically;
+                # we still send our explicit header for clarity).
+                response = await client.request(method, login_url, data=payload, headers=headers)
+            else:
+                response = await client.request(method, login_url, json=payload, headers=headers)
     except httpx.HTTPError as exc:
         # Network-layer failure (DNS, timeout, connection reset). Keep the
         # exception class name in the log but not the URL — the URL can
@@ -92,7 +110,7 @@ async def authenticate(
     if not isinstance(body, dict):
         raise AuthError("Service API returned a non-object JSON body.")
 
-    return _parse_session(auth_config, body)
+    return _parse_session(auth_config, body, api_key=api_key)
 
 
 # ----------------------------------------------------------------------
@@ -106,7 +124,12 @@ def _build_request(
     auth: ApiAuthConfig,
     api_key: str,
     secret_key: str,
-) -> tuple[str, str, dict[str, str], dict[str, str]]:
+) -> tuple[str, str, dict[str, str], dict[str, str], str]:
+    """Return (url, method, payload, headers, content_type).
+
+    ``content_type`` is the resolved login body encoding — the caller picks
+    between ``data=`` (form-urlencoded) and ``json=`` (JSON) based on it.
+    """
     login_path = (auth.login_path or "").lstrip("/")
     if not login_path:
         raise ServiceApiConfigurationError("auth.login_path is required for session_login.")
@@ -129,11 +152,24 @@ def _build_request(
         rendered = template.format(api_key=api_key, secret_key=secret_key)
         payload[field] = rendered
 
+    # Resolve content type — defaults to JSON. Unsupported values fall back
+    # to JSON with a stderr warning so misconfiguration is visible without
+    # crashing the consent handler.
+    content_type = (auth.login_content_type or "application/json").lower().strip()
+    if content_type not in _SUPPORTED_LOGIN_CONTENT_TYPES:
+        print(
+            f"[mcp.auth.service_api] auth.login_content_type={content_type!r} not "
+            f"supported; falling back to application/json. "
+            f"Supported: {sorted(_SUPPORTED_LOGIN_CONTENT_TYPES)}",
+            file=sys.stderr,
+        )
+        content_type = "application/json"
+
     headers: dict[str, str] = {
         "accept": "application/json",
-        "content-type": "application/json",
+        "content-type": content_type,
     }
-    return login_url, method, payload, headers
+    return login_url, method, payload, headers, content_type
 
 
 # ----------------------------------------------------------------------
@@ -141,10 +177,32 @@ def _build_request(
 # ----------------------------------------------------------------------
 
 
-def _parse_session(auth: ApiAuthConfig, body: dict[str, Any]) -> SessionInfo:
+def _parse_session(
+    auth: ApiAuthConfig,
+    body: dict[str, Any],
+    *,
+    api_key: str | None = None,
+) -> SessionInfo:
     session_id = _dotted_lookup(body, auth.session_id_field or "session_id")
     session_expire = _dotted_lookup(body, auth.session_expire_field or "session_expire")
-    user_id = _dotted_lookup(body, auth.user_id_field or "user_id")
+
+    user_id_field = auth.user_id_field or "user_id"
+    if user_id_field == USER_ID_FROM_API_KEY:
+        # Derive a stable, opaque user identifier from the api_key. Used when
+        # the Service API response only exposes tenant info (e.g.
+        # ``company_group``) and no per-user identifier. Namespaced by the
+        # tenant so two tenants with hash collisions on the first 16 chars do
+        # not step on each other.
+        if not api_key:
+            raise ServiceApiConfigurationError(
+                f"user_id_field={USER_ID_FROM_API_KEY!r} requires the api_key to be "
+                "passed to _parse_session(); this is an internal invariant violation."
+            )
+        company = _lookup_company_group(body) or "default"
+        fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+        user_id: Any = f"{company}:{fingerprint}"
+    else:
+        user_id = _dotted_lookup(body, user_id_field)
 
     missing: list[str] = []
     if session_id is None:
@@ -152,7 +210,7 @@ def _parse_session(auth: ApiAuthConfig, body: dict[str, Any]) -> SessionInfo:
     if session_expire is None:
         missing.append(auth.session_expire_field or "session_expire")
     if user_id is None:
-        missing.append(auth.user_id_field or "user_id")
+        missing.append(user_id_field)
     if missing:
         raise AuthRequiredError(
             "Service API response is missing required field(s); the operator "
@@ -169,10 +227,33 @@ def _parse_session(auth: ApiAuthConfig, body: dict[str, Any]) -> SessionInfo:
         user_id=str(user_id),
         session_id=str(session_id),
         session_expire=session_expire_int,
-        company_group=_optional_str(_dotted_lookup(body, "company_group")),
-        user_type=_optional_str(_dotted_lookup(body, "user_type")),
-        app_package=_optional_str(_dotted_lookup(body, "app_package")),
+        company_group=_optional_str(_lookup_company_group(body)),
+        user_type=_optional_str(_lookup_metadata_field(body, "user_type")),
+        app_package=_optional_str(_lookup_metadata_field(body, "app_package")),
     )
+
+
+def _lookup_company_group(body: dict[str, Any]) -> Any:
+    """Find ``company_group`` regardless of whether it's at the top level
+    (some Service APIs) or nested under ``data`` (Taximail-style envelopes).
+
+    Returns ``None`` if neither location has it.
+    """
+    return _lookup_metadata_field(body, "company_group")
+
+
+def _lookup_metadata_field(body: dict[str, Any], field: str) -> Any:
+    """Try ``body[field]`` first, then ``body['data'][field]``.
+
+    Many Service APIs wrap their payload under a ``data`` envelope
+    (``{"status":"success","data":{...}}``); user-meta fields like
+    ``company_group``/``user_type``/``app_package`` end up nested. This
+    helper accepts either shape without requiring per-field config.
+    """
+    direct = _dotted_lookup(body, field)
+    if direct is not None:
+        return direct
+    return _dotted_lookup(body, f"data.{field}")
 
 
 def _dotted_lookup(body: dict[str, Any], dotted_path: str) -> Any:

@@ -20,16 +20,17 @@ from src.config import ApiAuthConfig, ApiConfig
 
 
 def _config(**auth_overrides: Any) -> ApiConfig:
-    auth = ApiAuthConfig(
-        type="session_login",
-        login_path="/v1/auth",
-        login_method="POST",
-        credentials={"api_key": "{api_key}", "secret_key": "{secret_key}"},
-        session_id_field="data.session_id",
-        session_expire_field="data.session_expire",
-        user_id_field="data.user_id",
-        **auth_overrides,
-    )
+    defaults: dict[str, Any] = {
+        "type": "session_login",
+        "login_path": "/v1/auth",
+        "login_method": "POST",
+        "credentials": {"api_key": "{api_key}", "secret_key": "{secret_key}"},
+        "session_id_field": "data.session_id",
+        "session_expire_field": "data.session_expire",
+        "user_id_field": "data.user_id",
+    }
+    defaults.update(auth_overrides)  # overrides win over defaults
+    auth = ApiAuthConfig(**defaults)
     return ApiConfig(type="rest", base_url="https://svc.example.com", auth=auth)
 
 
@@ -44,11 +45,20 @@ class _StubClient:
     async def __aexit__(self, *_args: Any) -> None:
         return None
 
-    async def request(self, method: str, url: str, *, json: Any, headers: Any) -> httpx.Response:
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: Any = None,
+        data: Any = None,
+        headers: Any = None,
+    ) -> httpx.Response:
         self._observed["method"] = method
         self._observed["url"] = url
         self._observed["json"] = json
-        self._observed["headers"] = dict(headers)
+        self._observed["data"] = data
+        self._observed["headers"] = dict(headers) if headers else {}
         return self._response
 
 
@@ -169,3 +179,183 @@ async def test_authenticate_redacts_logging(
     for record in caplog.records:
         assert "LEAKED-KEY" not in record.getMessage()
         assert "LEAKED-SECRET" not in record.getMessage()
+
+
+# ----------------------------------------------------------------------
+# Phase 9.1 — form-encoded login body
+# ----------------------------------------------------------------------
+
+
+async def test_form_urlencoded_login_sends_data_not_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service APIs like Taximail require form-encoded login bodies, not JSON."""
+    response = httpx.Response(
+        201,
+        json={"data": {"session_id": "abc", "session_expire": 9999999999, "user_id": "u1"}},
+    )
+    observed = _patch_client(monkeypatch, response)
+    cfg = _config(login_content_type="application/x-www-form-urlencoded")
+
+    session = await authenticate(cfg, api_key="K", secret_key="S")
+
+    assert session.session_id == "abc"
+    # The body must arrive via `data=` (form-encoded), NOT `json=`.
+    assert observed["data"] == {"api_key": "K", "secret_key": "S"}
+    assert observed["json"] is None
+    assert observed["headers"]["content-type"] == "application/x-www-form-urlencoded"
+
+
+async def test_json_login_remains_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No login_content_type → JSON path (backward compat)."""
+    response = httpx.Response(
+        200,
+        json={"data": {"session_id": "j", "session_expire": 9999999999, "user_id": "u"}},
+    )
+    observed = _patch_client(monkeypatch, response)
+
+    await authenticate(_config(), api_key="K", secret_key="S")
+
+    assert observed["json"] == {"api_key": "K", "secret_key": "S"}
+    assert observed["data"] is None
+    assert observed["headers"]["content-type"] == "application/json"
+
+
+async def test_unsupported_login_content_type_falls_back_to_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Misconfigured content-type warns on stderr and falls back to JSON."""
+    response = httpx.Response(
+        200,
+        json={"data": {"session_id": "x", "session_expire": 9999999999, "user_id": "u"}},
+    )
+    observed = _patch_client(monkeypatch, response)
+    cfg = _config(login_content_type="application/xml")  # unsupported
+
+    await authenticate(cfg, api_key="K", secret_key="S")
+
+    # Body went via JSON (fallback)
+    assert observed["json"] is not None
+    assert observed["data"] is None
+    captured = capsys.readouterr()
+    # Warning to stderr per CLAUDE.md "no stdout for non-protocol" rule
+    assert captured.out == ""
+    assert "application/xml" in captured.err
+    assert "falling back" in captured.err
+
+
+# ----------------------------------------------------------------------
+# Phase 9.1 — `_api_key_fingerprint` user_id derivation
+# ----------------------------------------------------------------------
+
+
+async def test_user_id_fingerprint_namespaces_by_company(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When user_id_field=_api_key_fingerprint, derive from sha256(api_key)
+    namespaced by company_group from the response."""
+    response = httpx.Response(
+        201,
+        json={
+            "data": {
+                "session_id": "s1",
+                "session_expire": 9999999999,
+                "company_group": "taximail",
+            }
+        },
+    )
+    _patch_client(monkeypatch, response)
+    cfg = _config(user_id_field="_api_key_fingerprint")
+
+    session = await authenticate(cfg, api_key="USER-A-KEY", secret_key="S")
+
+    # Expected: "taximail:" + first 16 chars of sha256("USER-A-KEY")
+    import hashlib
+
+    expected_fp = hashlib.sha256(b"USER-A-KEY").hexdigest()[:16]
+    assert session.user_id == f"taximail:{expected_fp}"
+
+
+async def test_user_id_fingerprint_deterministic_across_logins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same api_key in two separate logins → same user_id (so the OAuth store
+    correctly maps repeat consents back to the same user row)."""
+    response = httpx.Response(
+        201,
+        json={
+            "data": {
+                "session_id": "s1",
+                "session_expire": 9999999999,
+                "company_group": "taximail",
+            }
+        },
+    )
+    _patch_client(monkeypatch, response)
+    cfg = _config(user_id_field="_api_key_fingerprint")
+
+    a = await authenticate(cfg, api_key="SAME-KEY", secret_key="S1")
+    b = await authenticate(cfg, api_key="SAME-KEY", secret_key="S2")  # different secret
+    assert a.user_id == b.user_id
+
+
+async def test_user_id_fingerprint_different_keys_distinct_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two different api_keys yield two different user_ids — even in the same
+    company. Prevents tenant-shared key DB collisions (the original problem)."""
+    response = httpx.Response(
+        201,
+        json={
+            "data": {
+                "session_id": "s",
+                "session_expire": 9999999999,
+                "company_group": "taximail",
+            }
+        },
+    )
+    _patch_client(monkeypatch, response)
+    cfg = _config(user_id_field="_api_key_fingerprint")
+
+    user_a = await authenticate(cfg, api_key="KEY-A", secret_key="X")
+    user_b = await authenticate(cfg, api_key="KEY-B", secret_key="X")
+    assert user_a.user_id != user_b.user_id
+    assert user_a.user_id.startswith("taximail:")
+    assert user_b.user_id.startswith("taximail:")
+
+
+async def test_user_id_fingerprint_falls_back_to_default_company(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If response has no `company_group`, the prefix falls back to 'default:'."""
+    response = httpx.Response(
+        200,
+        json={"data": {"session_id": "s", "session_expire": 9999999999}},
+    )
+    _patch_client(monkeypatch, response)
+    cfg = _config(user_id_field="_api_key_fingerprint")
+
+    session = await authenticate(cfg, api_key="K", secret_key="S")
+    assert session.user_id.startswith("default:")
+
+
+async def test_fingerprint_does_not_leak_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The derived user_id MUST NOT contain the raw api_key (one-way hash)."""
+    response = httpx.Response(
+        200,
+        json={
+            "data": {
+                "session_id": "s",
+                "session_expire": 9999999999,
+                "company_group": "taximail",
+            }
+        },
+    )
+    _patch_client(monkeypatch, response)
+    cfg = _config(user_id_field="_api_key_fingerprint")
+
+    session = await authenticate(cfg, api_key="VERY-SENSITIVE-KEY", secret_key="S")
+    assert "VERY-SENSITIVE-KEY" not in session.user_id
