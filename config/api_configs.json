@@ -33,6 +33,41 @@
         "timeout_seconds": 30,
         "max_retries": 3
       }
+    },
+    "taximail": {
+      "type": "rest",
+      "base_url": "https://api.taximail.com",
+      "auth": {
+        "type": "session_login",
+        "login_path": "/v2/user/login",
+        "login_method": "POST",
+        "login_content_type": "application/x-www-form-urlencoded",
+        "credentials": {
+          "api_key": "{api_key}",
+          "secret_key": "{secret_key}"
+        },
+        "session_id_field": "data.session_id",
+        "session_expire_field": "data.expire",
+        "user_id_field": "_api_key_fingerprint",
+        "session_header": "Authorization",
+        "session_format": "Bearer {session_id}"
+      },
+      "endpoints": {
+        "list_subscribers": {
+          "method": "GET",
+          "path": "/v2/list/35/subscribers",
+          "query_params": ["display_mode", "order_by", "order_type", "page", "limit"]
+        }
+      },
+      "logging": {
+        "request_payload": "metadata",
+        "response_payload": "summary",
+        "redact_fields": ["email", "subscriber_email"]
+      },
+      "limits": {
+        "timeout_seconds": 30,
+        "max_retries": 3
+      }
     }
   }
 }

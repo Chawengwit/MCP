@@ -9,6 +9,7 @@ from src.config import ApiConfig
 from src.events import Recorder
 from src.gateway import GraphQLClient, RestClient
 from src.oauth_provider.schemas import SessionInfo
+from src.oauth_provider.service_session import ServiceSessionStore
 
 AuthSource = Literal["oauth", "static_bearer"]
 
@@ -43,3 +44,13 @@ class ToolContext:
     user_id: str | None = None
     service_session: SessionInfo | None = None
     auth_source: AuthSource | None = None
+    service_session_store: ServiceSessionStore | None = None
+    """Phase 9.2 — per-request session resolver.
+
+    When the OAuth middleware authenticates a request, it publishes the
+    user_id to a contextvar. Tools that hit a ``session_login`` API call
+    :func:`src.tools.auth_resolver.ensure_service_session` which reads the
+    contextvar, then uses this store to fetch (and refresh) the
+    per-user Service API session. ``None`` means the server is running
+    without OAuth (stdio, static-bearer-only, or unit tests).
+    """

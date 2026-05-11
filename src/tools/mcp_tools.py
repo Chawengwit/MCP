@@ -17,6 +17,7 @@ from src.gateway.handlers import (
 )
 from src.tools.auth_resolver import (
     UnknownAuthTypeError,
+    ensure_service_session,
     peek_auth_state,
     resolve_auth_headers,
 )
@@ -90,11 +91,12 @@ async def fetch_data(input_: FetchDataInput, *, context: ToolContext) -> dict[st
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
 
         try:
+            service_session = await ensure_service_session(config=config, context=context)
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
                 credentials=context.credentials,
-                service_session=context.service_session,
+                service_session=service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)
@@ -157,11 +159,12 @@ async def send_data(input_: SendDataInput, *, context: ToolContext) -> dict[str,
             return _endpoint_not_found_error(input_.api_id, input_.endpoint)
 
         try:
+            service_session = await ensure_service_session(config=config, context=context)
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
                 credentials=context.credentials,
-                service_session=context.service_session,
+                service_session=service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)
@@ -223,11 +226,12 @@ async def execute_graphql(input_: GraphQLInput, *, context: ToolContext) -> dict
             )
 
         try:
+            service_session = await ensure_service_session(config=config, context=context)
             headers = await resolve_auth_headers(
                 config=config,
                 api_id=input_.api_id,
                 credentials=context.credentials,
-                service_session=context.service_session,
+                service_session=service_session,
             )
         except (AuthRequiredError, CredentialStorageError) as exc:
             return _auth_required_error(input_.api_id, exc)

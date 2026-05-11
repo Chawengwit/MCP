@@ -81,7 +81,7 @@ async def test_http_transport_routes_to_http_branch(
     async def _stdio_branch(_server: Any) -> None:
         raise _SentinelError("stdio")
 
-    async def _http_branch(_server: Any, _api_configs: Any) -> None:
+    async def _http_branch(_server: Any, _api_configs: Any, _context: Any) -> None:
         raise _SentinelError("http")
 
     monkeypatch.setattr(server_module, "_serve_stdio", _stdio_branch)
@@ -118,7 +118,7 @@ async def test_transport_value_is_lowercased_and_stripped(
     async def _stdio_branch(_server: Any) -> None:
         raise _SentinelError("stdio")
 
-    async def _http_branch(_server: Any, _api_configs: Any) -> None:
+    async def _http_branch(_server: Any, _api_configs: Any, _context: Any) -> None:
         raise _SentinelError("http")
 
     monkeypatch.setattr(server_module, "_serve_stdio", _stdio_branch)

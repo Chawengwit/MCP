@@ -301,7 +301,7 @@ async def main() -> None:
         if transport == "stdio":
             await _serve_stdio(server)
         else:  # transport == "http"
-            await _serve_http(server, api_configs)
+            await _serve_http(server, api_configs, context)
     finally:
         await recorder.stop()
         _log("MCP server stopped")
@@ -328,7 +328,9 @@ async def _serve_stdio(server: Server) -> None:
     await run_stdio(server, shutdown_event)
 
 
-async def _serve_http(server: Server, api_configs: dict[str, ApiConfig]) -> None:
+async def _serve_http(
+    server: Server, api_configs: dict[str, ApiConfig], context: ToolContext
+) -> None:
     """Run the server over Streamable HTTP. uvicorn owns SIGINT/SIGTERM.
 
     Resolves settings here (single env read) so the banner can include the
@@ -343,7 +345,7 @@ async def _serve_http(server: Server, api_configs: dict[str, ApiConfig]) -> None
     """
     try:
         host, port, token = resolve_http_settings()
-        oauth_components = await _maybe_build_oauth_components(api_configs)
+        oauth_components = await _maybe_build_oauth_components(api_configs, context)
         oauth_enabled = oauth_components is not None
         bearer_label = "set"
         if not token:
@@ -368,6 +370,7 @@ async def _serve_http(server: Server, api_configs: dict[str, ApiConfig]) -> None
 
 async def _maybe_build_oauth_components(
     api_configs: dict[str, ApiConfig],
+    context: ToolContext,
 ) -> tuple[Any, Any] | None:
     """Build the OAuth dispatcher + middleware pair, or return None.
 
@@ -422,6 +425,12 @@ async def _maybe_build_oauth_components(
         api_config=primary_api,
         authenticate=service_api_authenticate,
     )
+
+    # Phase 9.2 — wire the per-request session resolver into the ToolContext
+    # so ``ensure_service_session`` can fetch the right user's session at
+    # tool-call time. The middleware publishes the user_id to a contextvar;
+    # tools then ask the store for that user's SessionInfo.
+    context.service_session_store = service_store
 
     dispatcher = build_oauth_dispatcher(
         store=store,

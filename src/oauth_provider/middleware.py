@@ -29,6 +29,7 @@ from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .request_context import McpUser, set_current_mcp_user
 from .store import OAuthStore
 
 BEARER_PREFIX = b"Bearer "
@@ -93,22 +94,29 @@ def oauth_aware_bearer_middleware(
             return
         oauth_record = await store.get_access_token(token_str)
         if oauth_record is not None:
-            _ensure_state(scope)[SCOPE_STATE_KEY] = {
+            user_payload: McpUser = {
                 "user_id": oauth_record.user_id,
                 "auth_source": "oauth",
                 "client_id": oauth_record.client_id,
             }
+            _ensure_state(scope)[SCOPE_STATE_KEY] = user_payload
+            # Publish to the contextvar so tool handlers running inside
+            # the MCP SDK (which doesn't expose ASGI scope) can read the
+            # identity. The var resets when this asyncio task ends.
+            set_current_mcp_user(user_payload)
             await app(scope, receive, send)
             return
 
         # 2) Fall back to static Bearer (Phase 8 back-compat).
         if static_token_bytes and len(provided) == len(static_token_bytes):
             if secrets.compare_digest(provided, static_token_bytes):
-                _ensure_state(scope)[SCOPE_STATE_KEY] = {
+                static_payload: McpUser = {
                     "user_id": None,
                     "auth_source": "static_bearer",
                     "client_id": None,
                 }
+                _ensure_state(scope)[SCOPE_STATE_KEY] = static_payload
+                set_current_mcp_user(static_payload)
                 await app(scope, receive, send)
                 return
 

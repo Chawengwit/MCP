@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import os
 import time
+from typing import TYPE_CHECKING
 
-from src.auth import AuthRequiredError, Credentials
+from src.auth import AuthError, AuthRequiredError, Credentials
 from src.config import ApiConfig
+from src.oauth_provider.request_context import get_current_mcp_user
 from src.oauth_provider.schemas import SessionInfo
+
+if TYPE_CHECKING:
+    from src.tools.context import ToolContext
 
 # Authoritative list of auth.type values the gateway handles. Both
 # resolve_auth_headers and peek_auth_state branch on the early
@@ -14,6 +19,46 @@ from src.oauth_provider.schemas import SessionInfo
 # raise/return-unknown line below, surfacing the gap immediately rather than
 # silently mis-routing requests.
 KNOWN_AUTH_TYPES: frozenset[str] = frozenset({"oauth2", "bearer", "api_key", "session_login"})
+
+
+async def ensure_service_session(*, config: ApiConfig, context: ToolContext) -> SessionInfo | None:
+    """Resolve the per-user Service API session for the current request.
+
+    Resolution order:
+
+    1. ``context.service_session`` — pre-injected (tests, future direct
+       wiring). If set, use as-is.
+    2. The current request's ``user_id`` (from the OAuth middleware's
+       contextvar) plus ``context.service_session_store`` — look up and
+       transparently refresh if near expiry.
+    3. None — caller must surface AUTH_REQUIRED.
+
+    Returns ``None`` only when the API doesn't use ``session_login`` OR
+    no user / store is available. The caller (``resolve_auth_headers``)
+    decides whether ``None`` is fatal based on the auth type.
+    """
+    if config.auth is None or (config.auth.type or "").lower() != "session_login":
+        return None
+
+    if context.service_session is not None:
+        return context.service_session
+
+    if context.service_session_store is None:
+        return None
+
+    user = get_current_mcp_user()
+    if user is None:
+        return None
+    user_id = user.get("user_id")
+    if not user_id:
+        return None
+
+    try:
+        return await context.service_session_store.get(user_id)
+    except (AuthRequiredError, AuthError):
+        # Surface as "no session" — the auth resolver will raise
+        # AuthRequiredError with the right operator-facing message.
+        return None
 
 
 class UnknownAuthTypeError(ValueError):
