@@ -211,12 +211,19 @@ def build_app(
         # `manager.run()` enters/exits with the server lifecycle.
         await lifespan_app(scope, receive, send)
 
+    # Compose: CORS (outermost) → auth → dispatcher.
+    # CORS must run before auth so that OPTIONS preflight responses don't
+    # demand a Bearer token (browsers don't send credentials on preflight).
+    from .cors import cors_middleware, resolve_allowed_origins
+
     if oauth_middleware is not None:
         # Phase 9: the OAuth-aware middleware wraps the dispatcher and
         # replaces the static-bearer one. It already accepts both the
         # OAuth tokens and (if present) the static fallback token.
-        return oauth_middleware(dispatcher)
-    return bearer_auth_middleware(dispatcher, expected_token)
+        inner: ASGIApp = oauth_middleware(dispatcher)
+    else:
+        inner = bearer_auth_middleware(dispatcher, expected_token)
+    return cors_middleware(inner, allowed_origins=resolve_allowed_origins())
 
 
 def resolve_http_settings() -> tuple[str, int, str]:

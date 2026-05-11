@@ -51,3 +51,20 @@ def test_resolve_issuer_rejects_query_or_fragment(monkeypatch: pytest.MonkeyPatc
 def test_issuer_explicit_arg_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_OAUTH_ISSUER", "https://env-issuer")
     assert resolve_issuer(explicit="https://explicit-issuer") == "https://explicit-issuer"
+
+
+def test_is_protected_resource_path_accepts_both_variants() -> None:
+    """RFC 9728 §3 — both URL forms point at the same metadata."""
+    from src.oauth_provider.discovery import is_protected_resource_path
+
+    # Legacy variant (resource has no path).
+    assert is_protected_resource_path("/.well-known/oauth-protected-resource")
+    # Strict variant (resource path appended) — MCP Inspector probes this form.
+    assert is_protected_resource_path("/.well-known/oauth-protected-resource/mcp")
+    # Deeper paths still match (some clients append /<scope>).
+    assert is_protected_resource_path("/.well-known/oauth-protected-resource/mcp/v1")
+
+    # Unrelated paths must not match — defends against accidental leakage.
+    assert not is_protected_resource_path("/.well-known/oauth-authorization-server")
+    assert not is_protected_resource_path("/.well-known/oauth-protected-resourceabc")
+    assert not is_protected_resource_path("/mcp")

@@ -29,7 +29,11 @@ from starlette.types import Receive, Scope, Send
 from src.config import ApiConfig
 
 from .authorize import authorize_get_handler, consent_post_handler
-from .discovery import WELL_KNOWN_AS_PATH, WELL_KNOWN_RESOURCE_PATH, discovery_handler
+from .discovery import (
+    WELL_KNOWN_AS_PATH,
+    discovery_handler,
+    is_protected_resource_path,
+)
 from .register import register_handler
 from .service_session import ServiceAuthCallable, ServiceSessionStore
 from .store import OAuthStore
@@ -59,7 +63,7 @@ def build_oauth_dispatcher(
 
         path = str(scope.get("path", ""))
 
-        if path == WELL_KNOWN_AS_PATH or path == WELL_KNOWN_RESOURCE_PATH:
+        if path == WELL_KNOWN_AS_PATH or is_protected_resource_path(path):
             await discovery_handler(scope=scope, send=send, issuer=issuer)
             return True
 

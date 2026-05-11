@@ -34,6 +34,24 @@ WELL_KNOWN_AS_PATH = "/.well-known/oauth-authorization-server"
 WELL_KNOWN_RESOURCE_PATH = "/.well-known/oauth-protected-resource"
 
 
+def is_protected_resource_path(path: str) -> bool:
+    """True for any RFC 9728 protected-resource discovery URL variant.
+
+    RFC 9728 §3 constructs the well-known URL by inserting
+    ``/.well-known/oauth-protected-resource`` between the host and the
+    resource path. So both forms are valid and we MUST accept either:
+
+      - ``/.well-known/oauth-protected-resource``        (legacy / resource has no path)
+      - ``/.well-known/oauth-protected-resource/mcp``    (strict / resource path appended)
+
+    MCP Inspector (and Claude.ai) probe the strict variant first; some
+    older clients use only the legacy form. Returning the same metadata
+    for both is correct because this server hosts exactly one protected
+    resource (``/mcp``).
+    """
+    return path == WELL_KNOWN_RESOURCE_PATH or path.startswith(WELL_KNOWN_RESOURCE_PATH + "/")
+
+
 class DiscoveryError(RuntimeError):
     """Raised when the issuer URL is missing or malformed."""
 
@@ -100,7 +118,7 @@ async def discovery_handler(
     path = scope.get("path", "")
     if path == WELL_KNOWN_AS_PATH:
         body = build_authorization_server_metadata(issuer)
-    elif path == WELL_KNOWN_RESOURCE_PATH:
+    elif is_protected_resource_path(path):
         body = build_protected_resource_metadata(issuer)
     else:  # pragma: no cover — caller guards the path
         await _send_json(send, 404, {"error": "not_found"})
